@@ -1,0 +1,47 @@
+{
+  "name": "cograph-connect",
+  "version": "0.1.0",
+  "description": "Connect Cograph to agent clients through MCP and Codex skills.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "cograph-connect": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "prepack": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "pack:dry": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "commander": "^14.0.2",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/prompts": "^2.4.9",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mikekonan/cograph-connect.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mikekonan/cograph-connect/issues"
+  },
+  "homepage": "https://github.com/mikekonan/cograph-connect#readme"
+}
