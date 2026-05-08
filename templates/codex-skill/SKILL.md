@@ -36,10 +36,17 @@ Every retrieval tool returns:
 {
   "results": [
     {
+      "layer": "code",
       "snippet": "≤ snippet_chars characters",
       "content_truncated": true,
-      "citation": { "file_path": "...", "start_line": 42, "end_line": 58 },
-      "repository_slug": "github.com/owner/name"
+      "provenance": {
+        "file_path": "src/auth/middleware.py",
+        "start_line": 42,
+        "end_line": 58,
+        "node_id": "uuid-or-null",
+        "document_id": "uuid-or-null",
+        "heading_path": ["…"]
+      }
     }
   ],
   "total_tokens_estimate": 2840,
