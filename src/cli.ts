@@ -17,6 +17,7 @@ import { configPath, type AgentClient, packageRoot } from "./paths.js";
 import { validateRemote } from "./remote.js";
 import { installCodexSkill } from "./skill.js";
 import { runMcpProxy } from "./proxy.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 const CLIENTS: AgentClient[] = ["claude", "cursor", "codex"];
 
@@ -162,7 +163,7 @@ const program = new Command();
 program
   .name("cograph-connect")
   .description("Connect Cograph to agent clients through MCP and Codex skills.")
-  .version("0.1.0");
+  .version(PACKAGE_VERSION);
 
 program
   .command("setup")

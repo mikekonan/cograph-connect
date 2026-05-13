@@ -24,9 +24,10 @@ covers the question — every search-style tool returns excerpts plus a
 | Code AND wiki together | `cograph.retrieve(mode='mixed')` | Only when target unclear. |
 | Read this code node fully | `cograph.read_node(node_id)` | After search. Pass `with_summary=true` only if you need the AST summary. |
 | Read lines 100–200 of foo.py | `cograph.read_file_range(slug, path, start_line, end_line)` | Capped at 1000 lines. |
+| Trace callers / callees of a node | `cograph.related(repository, node_id, depth, direction)` | After search. `direction` ∈ callers / callees / both; `depth` ≤ 5. |
 | Find chunks in a collection | `cograph.collection_search` | Excerpts. |
 | Read one chunk fully | `cograph.read_chunk` | After `cograph.collection_search`. |
-| Inspect a wiki page | `cograph.collection_document` (md collection) or wiki resource via `cograph://repo/{slug}/wiki/{page-slug}` | |
+| Inspect a wiki page | `cograph.collection_document` (md collection) or wiki resource via `cograph://repo/{host}/{owner}/{name}/wiki/{slug}` | |
 
 ## Response envelope (search-style tools)
 

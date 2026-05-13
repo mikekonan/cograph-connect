@@ -14,6 +14,7 @@ import {
 
 import { requireProfile } from "./config.js";
 import { closeRemote, connectRemote, type RemoteConnection } from "./remote.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 function proxiedCapabilities(client: Client): ServerCapabilities {
   const remote = client.getServerCapabilities();
@@ -30,7 +31,7 @@ export async function runMcpProxy(profileName?: string): Promise<void> {
   try {
     remote = await connectRemote(profile);
     const server = new Server(
-      { name: "cograph", version: "0.1.0" },
+      { name: "cograph", version: PACKAGE_VERSION },
       {
         capabilities: proxiedCapabilities(remote.client),
         instructions:

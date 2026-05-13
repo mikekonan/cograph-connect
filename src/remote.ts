@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { normalizeMcpUrl } from "./config.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 export type RemoteConnection = {
   client: Client;
@@ -23,7 +24,7 @@ export async function connectRemote({
     },
   });
   const client = new Client(
-    { name: "cograph-connect", version: "0.1.0" },
+    { name: "cograph-connect", version: PACKAGE_VERSION },
     { capabilities: {} },
   );
   await client.connect(transport);

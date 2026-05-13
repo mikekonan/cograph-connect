@@ -34,10 +34,19 @@ Create a Cograph personal access token with:
 ## Commands
 
 ```bash
-cograph-connect setup
+cograph-connect setup [--url <url>] [--token <token>] [--profile <name>] \
+                      [--clients claude,cursor,codex] [-y] \
+                      [--no-validate] [--no-skill]
 cograph-connect status --check
 cograph-connect config print
 cograph-connect mcp --profile default
 ```
 
-Use `COGRAPH_CONNECT_TOKEN` to override the stored token for one command.
+- `setup` prompts for any missing fields; `-y` accepts defaults
+  (`http://localhost:8080`, all clients selected) for unanswered choices.
+- `--no-validate` skips the MCP `tools/list` round-trip against the
+  remote — useful when configuring offline.
+- `--no-skill` skips copying the Codex skill to `~/.codex/skills/`.
+
+Use `COGRAPH_CONNECT_TOKEN` to override the stored token for a single
+command (handy for ad-hoc runs without touching `config.json`).

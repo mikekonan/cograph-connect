@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.1
+
+Sync with the current Cograph MCP surface and drop the three hardcoded
+`0.1.0` strings still in the source. CLI behaviour is unchanged.
+
+- `cograph-connect --version`, the MCP client identifier sent to the
+  remote server, and the local stdio server's name all now read from
+  `package.json` instead of a literal `0.1.0`. Easier to spot the
+  client version in remote logs after future bumps.
+- `templates/codex-skill/SKILL.md`:
+  - Added `cograph.related(repository, node_id, depth, direction)` to
+    the decision table — the backend ships it but the previous skill
+    file omitted it.
+  - Fixed the wiki resource URI from
+    `cograph://repo/{slug}/wiki/{page-slug}` to the actual template
+    `cograph://repo/{host}/{owner}/{name}/wiki/{slug}` (backend uses
+    the host/owner/name shape, not the repo slug).
+- `package-lock.json` patch bumps: `@types/node` 24.12.2 → 24.12.4,
+  `vitest` 4.1.5 → 4.1.6.
+
 ## 0.2.0
 
 Requires a Cograph backend with the rewritten MCP surface (server commit
