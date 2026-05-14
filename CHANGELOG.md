@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+Polish on the 0.4.0 architecture change. Setup's validation warning is now
+a single line — the multi-paragraph VPN / corporate-CA / 502 / proxy
+explanation got dropped. In 0.4.0 the runtime path for Cursor, Codex, and
+Claude Code is direct HTTP from each client (their own TLS stacks), so
+the local Node-side validation hint set was misleading more often than
+helpful. Cause-chain unwinding and Bearer redaction are unchanged.
+
 ## 0.4.0
 
 Breaking: dropped the local stdio MCP proxy. `setup` now writes direct
