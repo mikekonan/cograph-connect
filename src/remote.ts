@@ -43,11 +43,25 @@ export async function validateRemote({
   url: string;
   token: string;
 }): Promise<number> {
-  const connection = await connectRemote({ url, token });
+  let connection: RemoteConnection;
+  try {
+    connection = await connectRemote({ url, token });
+  } catch (error) {
+    throw wrapRemoteError(error, url);
+  }
   try {
     const result = await connection.client.listTools();
     return result.tools.length;
+  } catch (error) {
+    throw wrapRemoteError(error, url);
   } finally {
     await closeRemote(connection);
   }
+}
+
+function wrapRemoteError(error: unknown, url: string): Error {
+  const target = normalizeMcpUrl(url);
+  const wrapped = new Error(`Failed to reach Cograph MCP at ${target}`);
+  (wrapped as { cause?: unknown }).cause = error;
+  return wrapped;
 }

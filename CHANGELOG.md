@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.2
+
+UX fix for the `fetch failed` wall users hit on `setup` when their Cograph
+hostname is unreachable (VPN off, hosted backend briefly 502/504, corporate
+proxy). Setup now writes the profile and client configs anyway and prints a
+warning with the real cause and recovery steps. Re-run `cograph-connect setup`
+or just `cograph-connect status --check` once connectivity is back.
+
+- `setup` no longer aborts when remote validation fails. The profile is saved
+  and every selected client is configured. A final `Warning:` block names the
+  underlying cause (`getaddrinfo ENOTFOUND …`, `ECONNREFUSED`, TLS, etc.)
+  with VPN / private-host / 502 / proxy as common explanations and points to
+  `cograph-connect status --check` for re-verification.
+- Errors raised from MCP transport now propagate their full `cause` chain.
+  Previously the CLI surface only showed `TypeError: fetch failed` with no
+  hint at the actual failure. Affects `setup`, `status --check`, and any
+  future fetch-backed command.
+- Bug fix: `--no-validate` and `--no-skill` were silently ignored in 0.3.0
+  and 0.3.1. commander parses `--no-X` flags into `options.X = false`, but
+  the action handler read `options.noValidate` / `options.noSkill` (always
+  `undefined`). Both flags now actually skip the corresponding step.
+- Behaviour change for CI: `setup` against an unreachable URL now exits
+  `0` (with a warning) instead of `1`. Pipelines that relied on the exit
+  code to gate "did the URL validate" should switch to
+  `cograph-connect status --check`, which remains strict (exits `1` on
+  failure with the full cause chain).
+- User-facing instructions are unchanged. `npx -y cograph-connect setup`
+  still walks through the same prompts and writes to the same paths.
+
 ## 0.3.1
 
 Hotfix for npm 11 `npx` argument parsing — 0.3.0 (and every prior version)
