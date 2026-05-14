@@ -21,22 +21,61 @@ import { PACKAGE_VERSION } from "./version.js";
 
 const CLIENTS: AgentClient[] = ["claude", "claude-code", "cursor", "codex"];
 
-function formatErrorChain(error: unknown): string {
-  const parts: string[] = [];
+function walkErrorChain(error: unknown): Error[] {
+  const chain: Error[] = [];
   let current: unknown = error;
   const seen = new Set<unknown>();
   while (current && !seen.has(current)) {
     seen.add(current);
     if (current instanceof Error) {
-      const code = (current as NodeJS.ErrnoException).code;
-      parts.push(code ? `${current.message} [${code}]` : current.message);
+      chain.push(current);
       current = (current as { cause?: unknown }).cause;
     } else {
-      parts.push(String(current));
+      chain.push(new Error(String(current)));
       break;
     }
   }
-  return parts.join(" → ");
+  return chain;
+}
+
+function formatErrorChain(error: unknown): string {
+  return walkErrorChain(error)
+    .map((err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      return code ? `${err.message} [${code}]` : err.message;
+    })
+    .join(" → ");
+}
+
+const TLS_TRUST_CODES = new Set([
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "CERT_UNTRUSTED",
+]);
+
+function diagnoseRemoteError(error: unknown): string {
+  const codes = walkErrorChain(error)
+    .map((err) => (err as NodeJS.ErrnoException).code)
+    .filter((code): code is string => Boolean(code));
+
+  if (codes.some((c) => TLS_TRUST_CODES.has(c))) {
+    return "TLS: Node does not trust the certificate issuer. If your Cograph instance uses a corporate or self-signed CA, set NODE_EXTRA_CA_CERTS=/path/to/ca.pem and re-run. Note: MCP clients (Claude Desktop / Code / Cursor / Codex) also need this env var when they launch the proxy — set it system-wide, or add an `env` block to the MCP server config they wrote.";
+  }
+  if (codes.includes("CERT_HAS_EXPIRED")) {
+    return "TLS: the server certificate is expired. This is a backend issue — contact the Cograph operator.";
+  }
+  if (codes.includes("ENOTFOUND")) {
+    return "DNS: hostname does not resolve. Usually means VPN is not connected, or the URL has a typo.";
+  }
+  if (codes.includes("ECONNREFUSED")) {
+    return "Connection refused: the host is reachable but nothing listens on that port. Check the URL/port.";
+  }
+  if (codes.includes("ECONNRESET") || codes.includes("ETIMEDOUT")) {
+    return "Network: the connection was dropped or timed out. A corporate proxy / firewall is the usual suspect.";
+  }
+  return "Common causes: VPN is not connected, the Cograph hostname is private to your network, the backend is briefly returning 502/504, or a corporate proxy blocks the request.";
 }
 
 type SetupOptions = {
@@ -193,13 +232,12 @@ async function runSetup(options: SetupOptions): Promise<void> {
       /Bearer\s+\S+/gi,
       "Bearer <redacted>",
     );
+    const diagnosis = diagnoseRemoteError(validationError);
     console.warn("");
     console.warn(`Warning: could not validate remote Cograph MCP — ${reason}`);
+    console.warn(`Profile and client configs were saved anyway. ${diagnosis}`);
     console.warn(
-      "Profile and client configs were saved anyway. Common causes: VPN is not connected, the Cograph hostname is private to your network, the backend is briefly returning 502/504, or a corporate proxy blocks the request.",
-    );
-    console.warn(
-      "After fixing connectivity (e.g. connecting VPN), run `cograph-connect status --check` to verify the profile.",
+      "Once fixed, run `cograph-connect status --check` to verify the profile.",
     );
   }
 }

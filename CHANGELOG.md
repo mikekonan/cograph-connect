@@ -10,9 +10,17 @@ or just `cograph-connect status --check` once connectivity is back.
 
 - `setup` no longer aborts when remote validation fails. The profile is saved
   and every selected client is configured. A final `Warning:` block names the
-  underlying cause (`getaddrinfo ENOTFOUND …`, `ECONNREFUSED`, TLS, etc.)
-  with VPN / private-host / 502 / proxy as common explanations and points to
-  `cograph-connect status --check` for re-verification.
+  underlying cause and gives a targeted next step based on the error code:
+  - TLS (`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`, `SELF_SIGNED_CERT_IN_CHAIN`,
+    `DEPTH_ZERO_SELF_SIGNED_CERT`, `UNABLE_TO_VERIFY_LEAF_SIGNATURE`,
+    `CERT_UNTRUSTED`) → suggest `NODE_EXTRA_CA_CERTS` and warn that MCP
+    clients launching the proxy need the same env var.
+  - `CERT_HAS_EXPIRED` → flag as a backend issue.
+  - `ENOTFOUND` → VPN / hostname typo.
+  - `ECONNREFUSED` → wrong port / nothing listening.
+  - `ECONNRESET` / `ETIMEDOUT` → corporate proxy or firewall.
+  - Anything else → generic VPN / private-host / 502 / proxy explanation.
+  All cases point to `cograph-connect status --check` for re-verification.
 - Errors raised from MCP transport now propagate their full `cause` chain.
   Previously the CLI surface only showed `TypeError: fetch failed` with no
   hint at the actual failure. Affects `setup`, `status --check`, and any
