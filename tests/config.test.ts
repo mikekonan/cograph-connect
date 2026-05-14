@@ -70,6 +70,14 @@ describe("client config merge", () => {
     expect(PINNED_PACKAGE_SPEC).toMatch(/^cograph-connect@\d+\.\d+\.\d+/);
   });
 
+  test("uses --yes and -- separator so npm 11 npx parses package spec correctly", () => {
+    const args = mcpServerConfig("default").args as string[];
+    expect(args[0]).toBe("--yes");
+    expect(args[1]).toBe("--");
+    expect(args[2]).toBe(PINNED_PACKAGE_SPEC);
+    expect(args).not.toContain("-y");
+  });
+
   test("replaces only Codex cograph MCP block", () => {
     const merged = mergeCodexTomlConfig(
       [
@@ -87,6 +95,7 @@ describe("client config merge", () => {
     expect(merged.content).toContain('model = "gpt-5"');
     expect(merged.content).toContain("[mcp_servers.other]");
     expect(merged.content).toContain('--profile", "work"');
+    expect(merged.content).toContain('"--yes", "--",');
     expect(merged.content).not.toContain('command = "old"');
     expect(merged.removedLegacy).toBe(false);
   });

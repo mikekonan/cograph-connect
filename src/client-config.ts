@@ -30,7 +30,7 @@ export const PINNED_PACKAGE_SPEC = `cograph-connect@${PACKAGE_VERSION}`;
 export function mcpServerConfig(profile = "default"): Record<string, unknown> {
   return {
     command: "npx",
-    args: ["-y", PINNED_PACKAGE_SPEC, "mcp", "--profile", profile],
+    args: ["--yes", "--", PINNED_PACKAGE_SPEC, "mcp", "--profile", profile],
   };
 }
 
@@ -108,7 +108,7 @@ export function mergeCodexTomlConfig(raw: string | null, profile: string): Merge
   const block = [
     "[mcp_servers.cograph]",
     'command = "npx"',
-    `args = ["-y", ${JSON.stringify(PINNED_PACKAGE_SPEC)}, "mcp", "--profile", ${JSON.stringify(profile)}]`,
+    `args = ["--yes", "--", ${JSON.stringify(PINNED_PACKAGE_SPEC)}, "mcp", "--profile", ${JSON.stringify(profile)}]`,
   ];
   return {
     content: `${output.length ? `${output.join("\n")}\n\n` : ""}${block.join("\n")}\n`,

@@ -1,6 +1,6 @@
 {
   "name": "cograph-connect",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Connect Cograph to agent clients through MCP and Codex skills.",
   "license": "Apache-2.0",
   "type": "module",
