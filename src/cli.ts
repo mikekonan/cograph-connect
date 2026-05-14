@@ -16,7 +16,6 @@ import {
 import { configPath, type AgentClient, packageRoot } from "./paths.js";
 import { validateRemote } from "./remote.js";
 import { installSkill } from "./skill.js";
-import { runMcpProxy } from "./proxy.js";
 import { PACKAGE_VERSION } from "./version.js";
 
 const CLIENTS: AgentClient[] = ["claude", "claude-code", "cursor", "codex"];
@@ -175,6 +174,10 @@ function printClientResult(result: ClientWriteResult): void {
   }
 }
 
+function quoteForShell(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 async function runSetup(options: SetupOptions): Promise<void> {
   const resolved = await promptMissing(options);
   if (!resolved.url || !resolved.token) {
@@ -203,13 +206,23 @@ async function runSetup(options: SetupOptions): Promise<void> {
   console.log(`Saved profile "${options.profile}" to ${configPath()}`);
   console.log(`Token: ${redactToken(profile.token)}`);
 
+  const codexInstructions: { envVar: string; token: string }[] = [];
   for (const client of resolved.clients) {
     try {
-      printClientResult(await configureClient(client, options.profile));
+      const result = await configureClient(client, options.profile, profile);
+      printClientResult(result);
+      if (client === "codex" && result.codexTokenEnvVar) {
+        codexInstructions.push({
+          envVar: result.codexTokenEnvVar,
+          token: profile.token,
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`${client}: could not update config: ${message}`);
-      console.error(`Manual snippet:\n${manualSnippet(client, options.profile)}`);
+      console.error(
+        `Manual snippet:\n${manualSnippet(client, options.profile, profile)}`,
+      );
     }
   }
 
@@ -224,6 +237,17 @@ async function runSetup(options: SetupOptions): Promise<void> {
       for (const { client, target } of installed) {
         console.log(`${client} skill: installed at ${target}`);
       }
+    }
+  }
+
+  if (codexInstructions.length > 0) {
+    console.log("");
+    console.log(
+      "Codex reads the PAT from an environment variable (the token is NOT stored in ~/.codex/config.toml).",
+    );
+    console.log("Add this to your shell rc (e.g. ~/.zshenv) and reload:");
+    for (const { envVar, token } of codexInstructions) {
+      console.log(`  export ${envVar}=${quoteForShell(token)}`);
     }
   }
 
@@ -276,12 +300,6 @@ program
   .option("--no-validate", "Skip remote MCP validation")
   .option("--no-skill", "Skip SKILL.md install for clients that support it")
   .action(async (options: SetupOptions) => runSetup(options));
-
-program
-  .command("mcp")
-  .description("Run the local stdio MCP proxy.")
-  .option("--profile <name>", "Profile name")
-  .action(async ({ profile }: { profile?: string }) => runMcpProxy(profile));
 
 program
   .command("status")

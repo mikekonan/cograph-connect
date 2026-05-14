@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.4.0
+
+Breaking: dropped the local stdio MCP proxy. `setup` now writes direct
+remote-HTTP entries straight into each client's config — no `cograph-connect
+mcp` runtime, no second Node process, no custom TLS stack.
+
+### Per-client output
+
+| Client | Transport | Notes |
+|---|---|---|
+| Claude Code | `type: "http"`, inline `Authorization` header | Native HTTP MCP. No proxy. |
+| Cursor | `url` + inline `Authorization` header | Native HTTP MCP. No proxy. |
+| Codex | TOML with `url` + `bearer_token_env_var` | Codex reads token from `COGRAPH_TOKEN_<PROFILE>` env var — `setup` prints the `export …` line for the user's shell rc. Token is **not** written into `config.toml`. |
+| Claude Desktop | `npx -y mcp-remote <url> --header "Authorization: Bearer …"` + `env: { NODE_OPTIONS: "--use-system-ca" }` | Claude Desktop's config schema is stdio-only (confirmed by [Anthropic Help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) and several bug reports). Setup falls back to the community `mcp-remote` stdio→HTTP bridge. The `NODE_OPTIONS=--use-system-ca` env makes its Node trust the OS keychain (closes the corporate-CA hole). |
+
+### Removed
+
+- `cograph-connect mcp` subcommand and `src/proxy.ts`. The package no longer
+  runs an MCP server itself. Anything still launching `npx -y --
+  cograph-connect@<old> mcp …` will break — re-run `cograph-connect setup`
+  on the new version to rewrite client configs.
+- `PINNED_PACKAGE_SPEC` constant and the version-pinned npx invocation. Not
+  needed now that we are not the server. Pin still applies to `mcp-remote`
+  via npx's normal version-spec rules (we let npx resolve `mcp-remote`
+  without a pin so `--prefer-offline` cache reuse works after first run).
+
+### Why this is the right move
+
+- Eliminates the npx-on-every-launch DNS to `registry.npmjs.org` for the
+  three clients that don't need a stdio bridge.
+- Eliminates the Node-bundled-CA-store problem for those three clients —
+  Cursor, Codex, and Claude Code use the OS trust store via their own HTTP
+  stacks. Internal hosts behind a private CA (e.g. `*.pgw.internal`) work
+  out of the box for them.
+- Token still has a single source of truth in
+  `~/.config/cograph-connect/config.json`. `setup` reads it and writes it
+  inline (Claude Code, Cursor, Claude Desktop bridge) or by env-var-name
+  reference (Codex). Token rotation = `cograph-connect setup` once, every
+  client picks up the new value.
+
+### Caveats
+
+- Token is now present in plaintext in the JSON files for Claude Desktop /
+  Code / Cursor. Equivalent exposure to the previous
+  `~/.config/cograph-connect/config.json` if the user owns the home
+  directory, but worth knowing. Codex avoids this via env var.
+- Claude Desktop still spawns `npx mcp-remote`, so the npm-registry DNS
+  dependency persists for that one client. Setting `NODE_OPTIONS=
+  --use-system-ca` in its `env` block addresses the bigger pain — private
+  CA TLS verification.
+
+### Upgrade path from 0.3.x
+
+1. `npx -y cograph-connect@0.4.0 setup` — overwrites `mcpServers.cograph` /
+   `[mcp_servers.cograph]` entries in every selected client with the new
+   shape. Existing files are backed up automatically.
+2. For Codex: copy the printed `export COGRAPH_TOKEN_<PROFILE>=…` line into
+   your shell rc (`~/.zshenv` or equivalent) and reload the shell.
+3. Restart each client so it picks up the new config.
+
 ## 0.3.2
 
 UX fix for the `fetch failed` wall users hit on `setup` when their Cograph
