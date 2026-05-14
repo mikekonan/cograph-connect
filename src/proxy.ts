@@ -67,6 +67,9 @@ export async function runMcpProxy(profileName?: string): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`cograph-connect MCP proxy failed: ${message}\n`);
+    process.stderr.write(
+      "  → run `cograph-connect status --check` to diagnose (token expiry, remote 5xx, scope drift)\n",
+    );
     await (remote ? closeRemote(remote) : Promise.resolve());
     process.exitCode = 1;
   }
