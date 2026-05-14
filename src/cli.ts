@@ -21,14 +21,32 @@ import { PACKAGE_VERSION } from "./version.js";
 
 const CLIENTS: AgentClient[] = ["claude", "claude-code", "cursor", "codex"];
 
+function formatErrorChain(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof Error) {
+      const code = (current as NodeJS.ErrnoException).code;
+      parts.push(code ? `${current.message} [${code}]` : current.message);
+      current = (current as { cause?: unknown }).cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return parts.join(" → ");
+}
+
 type SetupOptions = {
   url?: string;
   token?: string;
   profile: string;
   clients?: string;
   yes?: boolean;
-  noValidate?: boolean;
-  noSkill?: boolean;
+  validate?: boolean;
+  skill?: boolean;
 };
 
 function parseClients(value?: string): AgentClient[] | undefined {
@@ -124,12 +142,17 @@ async function runSetup(options: SetupOptions): Promise<void> {
     throw new Error("Both Cograph URL and token are required");
   }
 
-  if (!options.noValidate) {
-    const count = await validateRemote({
-      url: resolved.url,
-      token: resolved.token,
-    });
-    console.log(`Validated remote MCP endpoint. Tools available: ${count}`);
+  let validationError: unknown = null;
+  if (options.validate !== false) {
+    try {
+      const count = await validateRemote({
+        url: resolved.url,
+        token: resolved.token,
+      });
+      console.log(`Validated remote MCP endpoint. Tools available: ${count}`);
+    } catch (error) {
+      validationError = error;
+    }
   }
 
   const config = await upsertProfile({
@@ -151,7 +174,7 @@ async function runSetup(options: SetupOptions): Promise<void> {
     }
   }
 
-  if (!options.noSkill) {
+  if (options.skill !== false) {
     const installed = await installSkill({
       packageRoot: packageRoot(import.meta.url),
       clients: resolved.clients,
@@ -163,6 +186,21 @@ async function runSetup(options: SetupOptions): Promise<void> {
         console.log(`${client} skill: installed at ${target}`);
       }
     }
+  }
+
+  if (validationError) {
+    const reason = formatErrorChain(validationError).replace(
+      /Bearer\s+\S+/gi,
+      "Bearer <redacted>",
+    );
+    console.warn("");
+    console.warn(`Warning: could not validate remote Cograph MCP — ${reason}`);
+    console.warn(
+      "Profile and client configs were saved anyway. Common causes: VPN is not connected, the Cograph hostname is private to your network, the backend is briefly returning 502/504, or a corporate proxy blocks the request.",
+    );
+    console.warn(
+      "After fixing connectivity (e.g. connecting VPN), run `cograph-connect status --check` to verify the profile.",
+    );
   }
 }
 
@@ -221,7 +259,7 @@ program
   .action(async () => runStatus({ check: false }));
 
 program.parseAsync().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = formatErrorChain(error);
   console.error(message.replace(/Bearer\s+\S+/gi, "Bearer <redacted>"));
   process.exitCode = 1;
 });
