@@ -15,11 +15,11 @@ import {
 } from "./client-config.js";
 import { configPath, type AgentClient, packageRoot } from "./paths.js";
 import { validateRemote } from "./remote.js";
-import { installCodexSkill } from "./skill.js";
+import { installSkill } from "./skill.js";
 import { runMcpProxy } from "./proxy.js";
 import { PACKAGE_VERSION } from "./version.js";
 
-const CLIENTS: AgentClient[] = ["claude", "cursor", "codex"];
+const CLIENTS: AgentClient[] = ["claude", "claude-code", "cursor", "codex"];
 
 type SetupOptions = {
   url?: string;
@@ -50,13 +50,21 @@ async function promptMissing(options: SetupOptions): Promise<{
   token: string;
   clients: AgentClient[];
 }> {
+  if (options.yes) {
+    if (!options.url) {
+      throw new Error("--url is required when using -y");
+    }
+    if (!options.token) {
+      throw new Error("--token is required when using -y");
+    }
+  }
+
   const questions: prompts.PromptObject[] = [];
   if (!options.url) {
     questions.push({
       type: "text",
       name: "url",
       message: "Cograph URL",
-      initial: "http://localhost:8080",
     });
   }
   if (!options.token) {
@@ -74,6 +82,7 @@ async function promptMissing(options: SetupOptions): Promise<{
       message: "Configure agent clients",
       choices: [
         { title: "Claude Desktop", value: "claude", selected: true },
+        { title: "Claude Code", value: "claude-code", selected: true },
         { title: "Cursor", value: "cursor", selected: true },
         { title: "Codex", value: "codex", selected: true },
       ],
@@ -101,6 +110,11 @@ function printClientResult(result: ClientWriteResult): void {
   console.log(`${result.client}: ${action} at ${result.path}`);
   if (result.backupPath) {
     console.log(`${result.client}: backup written to ${result.backupPath}`);
+  }
+  if (result.removedLegacy) {
+    console.log(
+      `${result.client}: removed legacy gitnexus MCP entry (replaced by cograph)`,
+    );
   }
 }
 
@@ -138,10 +152,17 @@ async function runSetup(options: SetupOptions): Promise<void> {
   }
 
   if (!options.noSkill) {
-    const target = await installCodexSkill({
+    const installed = await installSkill({
       packageRoot: packageRoot(import.meta.url),
+      clients: resolved.clients,
     });
-    console.log(`codex skill: installed at ${target}`);
+    if (installed.length === 0) {
+      console.log("skill: no selected client supports skill install (skipped)");
+    } else {
+      for (const { client, target } of installed) {
+        console.log(`${client} skill: installed at ${target}`);
+      }
+    }
   }
 }
 
@@ -171,10 +192,13 @@ program
   .option("--url <url>", "Cograph base URL or /mcp/ URL")
   .option("--token <token>", "Cograph PAT token")
   .option("--profile <name>", "Profile name", "default")
-  .option("--clients <list>", "Comma-separated clients: claude,cursor,codex")
-  .option("-y, --yes", "Use defaults for unanswered choices")
+  .option(
+    "--clients <list>",
+    `Comma-separated clients: ${CLIENTS.join(",")}`,
+  )
+  .option("-y, --yes", "Non-interactive (requires --url and --token)")
   .option("--no-validate", "Skip remote MCP validation")
-  .option("--no-skill", "Skip Codex skill installation")
+  .option("--no-skill", "Skip SKILL.md install for clients that support it")
   .action(async (options: SetupOptions) => runSetup(options));
 
 program

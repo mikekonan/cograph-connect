@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type AgentClient = "claude" | "cursor" | "codex";
+export type AgentClient = "claude" | "claude-code" | "cursor" | "codex";
 
 export function configPath(): string {
   if (process.env.COGRAPH_CONNECT_CONFIG) {
@@ -37,6 +37,8 @@ export function clientConfigPath(client: AgentClient): string {
         return path.join(base, "Claude", "claude_desktop_config.json");
       }
       return path.join(home, ".config", "Claude", "claude_desktop_config.json");
+    case "claude-code":
+      return path.join(home, ".claude.json");
     case "cursor":
       return path.join(home, ".cursor", "mcp.json");
     case "codex":
@@ -44,8 +46,21 @@ export function clientConfigPath(client: AgentClient): string {
   }
 }
 
-export function codexSkillPath(): string {
-  return path.join(os.homedir(), ".codex", "skills", "cograph-connect");
+/**
+ * Skill install path for clients that have a SKILL.md loader.
+ * Returns null for clients without one (Claude Desktop, Cursor).
+ */
+export function clientSkillPath(client: AgentClient): string | null {
+  const home = os.homedir();
+  switch (client) {
+    case "codex":
+      return path.join(home, ".codex", "skills", "cograph-connect");
+    case "claude-code":
+      return path.join(home, ".claude", "skills", "cograph-connect");
+    case "claude":
+    case "cursor":
+      return null;
+  }
 }
 
 export function packageRoot(metaUrl: string): string {

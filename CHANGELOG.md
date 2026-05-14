@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.3.0
+
+Multi-client + skill fan-out, legacy `gitnexus` migration, version-pinned
+proxy, expanded SKILL.md.
+
+- New `claude-code` client target. `setup` now writes the MCP entry into
+  `~/.claude.json` under `mcpServers.cograph` and installs the SKILL.md
+  to `~/.claude/skills/cograph-connect/`. Previously Claude Code users
+  had to edit `~/.claude.json` by hand.
+- Skill installer fans out: same canonical `templates/codex-skill/SKILL.md`
+  is copied to every selected client that has a skill loader (Codex,
+  Claude Code). Claude Desktop and Cursor are silently skipped — they
+  have no skill surface.
+- Legacy `gitnexus` MCP entries are detected and removed during `setup`,
+  in both JSON clients (`mcpServers.gitnexus`) and Codex TOML
+  (`[mcp_servers.gitnexus]`). Backups are still written. Setup prints a
+  notice when a legacy entry is replaced.
+- The proxy command written into client configs is now pinned to the
+  installed `cograph-connect` version (`npx -y cograph-connect@<ver> mcp`).
+  Removes the supply-chain hole where `npx` could resolve a newer
+  unvalidated release at launch.
+- Dropped the `http://localhost:8080` default URL under `-y`. `-y` is
+  now strictly non-interactive: requires `--url` and `--token`. Removes
+  the CI footgun where a missing `--url` silently pointed at a
+  non-existent local server.
+- `SKILL.md` gains a First-call checklist (`repository_id is required`,
+  401, 502/504, 403, NOT_FOUND), a trust matrix
+  (`code`/`ast`=ground-truth vs `ast_summary`/`wiki`=generated), a
+  dedicated `cograph.related` section, and a Typical-flow chain
+  (`repositories → outline → retrieve → read_node → related`).
+- Proxy prints a `→ run cograph-connect status --check` hint when the
+  upstream connection fails, so end users have a single command to
+  diagnose token / network / scope issues.
+- README rewritten: per-client install paths, upgrade-from-`gitnexus`
+  note, troubleshooting section covering 401/502, hosted vs
+  account-connector Cograph (the `claude.ai Cograph` 502 confusion),
+  and `repository_id is required` for agent traces.
+
 ## 0.2.1
 
 Sync with the current Cograph MCP surface and drop the three hardcoded
