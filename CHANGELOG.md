@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1
+
+Hotfix for npm 11 `npx` argument parsing — 0.3.0 (and every prior version)
+wrote a proxy invocation that `npm exec` no longer accepts, so MCP clients
+that re-resolved the bin would fail with `Unknown command:
+"cograph-connect"`. Re-run `cograph-connect setup` after upgrading.
+
+- `mcpServerConfig` now emits `npx --yes -- cograph-connect@<ver> mcp
+  --profile <p>` instead of `npx -y cograph-connect@<ver> mcp …`. npm 11.x
+  requires the long `--yes` flag and a `--` separator before the package
+  spec; the short `-y` form is silently consumed and the package spec is
+  interpreted as an npm subcommand.
+- Same fix applied to Codex TOML output.
+- New test asserts the `--yes` / `--` shape so future regressions break
+  the build.
+
 ## 0.3.0
 
 Multi-client + skill fan-out, legacy `gitnexus` migration, version-pinned
