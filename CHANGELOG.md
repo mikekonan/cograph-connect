@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.5.0
+
+`SKILL.md` is now a thin stub that points clients at the server-side
+playbook, instead of duplicating the decision tree, trust matrix, and
+tool catalog locally.
+
+The hosted backend renders an operator-tunable, ACL-aware playbook
+into the MCP `initialize` response (`instructions=`) on every
+session, and that text is the single source of truth: it tracks the
+live tool surface, includes per-deployment operator briefings, and
+gets updated on the backend in lock-step with the tools themselves.
+A static copy in this package drifted out of sync within weeks every
+time it shipped.
+
+What the stub keeps:
+
+- A pointer to the `initialize` payload as the source of truth.
+- The two re-fetch resources (`cograph://briefing` and
+  `cograph://my-context`) for mid-session context refresh.
+- The handful of failure modes the server can't preempt — 401 / 403
+  / 502 / 504 / `REPO_NOT_READY` and the "I don't have enough
+  information" exact phrasing for the give-up path.
+
+What the stub drops (and where it now lives):
+
+- Decision tree → server `instructions=` rendered per `initialize`.
+- Trust matrix (code vs ast_summary vs repo_doc) → per-tool L1/L2/L3
+  descriptions on each tool, surfaced by the MCP client itself.
+- Tool catalog → ditto.
+
+No CLI changes. Existing setups keep working — re-run `setup` to pick
+up the new SKILL.md.
+
 ## 0.4.1
 
 Polish on the 0.4.0 architecture change. Setup's validation warning is now
