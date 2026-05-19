@@ -12,7 +12,6 @@ import {
   type Profile,
 } from "../src/config.js";
 import {
-  codexTokenEnvVarName,
   mergeCodexTomlConfig,
   mergeJsonMcpConfig,
 } from "../src/client-config.js";
@@ -113,40 +112,107 @@ describe("client config — Cursor (direct HTTP, no type field)", () => {
   });
 });
 
-describe("client config — Claude Desktop (mcp-remote stdio bridge)", () => {
-  test("writes mcp-remote command with system-CA NODE_OPTIONS", () => {
-    const merged = JSON.parse(
-      mergeJsonMcpConfig(null, "claude", "default", DEFAULT_PROFILE).content,
+describe("client config — Claude Desktop (direct HTTP, no npx bridge)", () => {
+  test("writes type:http entry — never npx/mcp-remote", () => {
+    const result = mergeJsonMcpConfig(null, "claude", "default", DEFAULT_PROFILE);
+    const merged = JSON.parse(result.content);
+    expect(merged.mcpServers.cograph).toEqual({
+      type: "http",
+      url: "https://cograph.example.com/mcp/",
+      headers: { Authorization: "Bearer cgr_pat_abc123" },
+    });
+    expect(result.content).not.toContain("npx");
+    expect(result.content).not.toContain("mcp-remote");
+    expect(result.content).not.toContain("NODE_OPTIONS");
+  });
+
+  test("active cleanup: legacy npx/mcp-remote entry is replaced and flagged", () => {
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        mcpServers: {
+          cograph: {
+            command: "npx",
+            args: [
+              "-y",
+              "mcp-remote",
+              "https://cograph.example.com/mcp/",
+              "--header",
+              "Authorization: Bearer old_token",
+            ],
+            env: { NODE_OPTIONS: "--use-system-ca" },
+          },
+        },
+      }),
+      "claude",
+      "default",
+      DEFAULT_PROFILE,
     );
-    const entry = merged.mcpServers.cograph;
-    expect(entry.command).toBe("npx");
-    expect(entry.args).toEqual([
-      "-y",
-      "mcp-remote",
-      "https://cograph.example.com/mcp/",
-      "--header",
-      "Authorization: Bearer cgr_pat_abc123",
-    ]);
-    expect(entry.env).toEqual({ NODE_OPTIONS: "--use-system-ca" });
+    const merged = JSON.parse(result.content);
+    expect(merged.mcpServers.cograph.type).toBe("http");
+    expect(merged.mcpServers.cograph.command).toBeUndefined();
+    expect(merged.mcpServers.cograph.args).toBeUndefined();
+    expect(merged.mcpServers.cograph.env).toBeUndefined();
+    expect(result.removedNpxBridge).toBe(true);
+    expect(result.content).not.toContain("mcp-remote");
+  });
+
+  test("does NOT flag npx cleanup for an already-direct-HTTP entry", () => {
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        mcpServers: {
+          cograph: {
+            type: "http",
+            url: "https://old.example.com/mcp/",
+            headers: { Authorization: "Bearer prev" },
+          },
+        },
+      }),
+      "claude",
+      "default",
+      DEFAULT_PROFILE,
+    );
+    expect(result.removedNpxBridge).toBe(false);
   });
 });
 
-describe("client config — Codex (TOML with env-var token)", () => {
-  test("writes url + bearer_token_env_var, NOT the token inline", () => {
+describe("client config — Codex (TOML with inline token)", () => {
+  test("writes bearer_token inline, never env-var", () => {
     const result = mergeCodexTomlConfig(null, "default", DEFAULT_PROFILE);
     expect(result.content).toContain("[mcp_servers.cograph]");
     expect(result.content).toContain(
       'url = "https://cograph.example.com/mcp/"',
     );
-    expect(result.content).toContain('bearer_token_env_var = "COGRAPH_TOKEN_DEFAULT"');
-    expect(result.content).not.toContain("cgr_pat_abc123");
-    expect(result.codexTokenEnvVar).toBe("COGRAPH_TOKEN_DEFAULT");
+    expect(result.content).toContain('bearer_token = "cgr_pat_abc123"');
+    expect(result.content).not.toContain("bearer_token_env_var");
+    expect(result.content).not.toContain("COGRAPH_TOKEN_");
   });
 
-  test("env-var name is derived from profile (uppercased, sanitised)", () => {
-    expect(codexTokenEnvVarName("default")).toBe("COGRAPH_TOKEN_DEFAULT");
-    expect(codexTokenEnvVarName("work")).toBe("COGRAPH_TOKEN_WORK");
-    expect(codexTokenEnvVarName("staging-eu")).toBe("COGRAPH_TOKEN_STAGING_EU");
+  test("active cleanup: legacy bearer_token_env_var block is replaced and flagged", () => {
+    const result = mergeCodexTomlConfig(
+      [
+        "[mcp_servers.cograph]",
+        'url = "https://old.example.com/mcp/"',
+        'bearer_token_env_var = "COGRAPH_TOKEN_DEFAULT"',
+      ].join("\n"),
+      "default",
+      DEFAULT_PROFILE,
+    );
+    expect(result.content).toContain('bearer_token = "cgr_pat_abc123"');
+    expect(result.content).not.toContain("bearer_token_env_var");
+    expect(result.removedNpxBridge).toBe(true);
+  });
+
+  test("does NOT flag cleanup for an already-inline-token block", () => {
+    const result = mergeCodexTomlConfig(
+      [
+        "[mcp_servers.cograph]",
+        'url = "https://old.example.com/mcp/"',
+        'bearer_token = "old_token"',
+      ].join("\n"),
+      "default",
+      DEFAULT_PROFILE,
+    );
+    expect(result.removedNpxBridge).toBe(false);
   });
 
   test("preserves unrelated TOML blocks", () => {
@@ -185,6 +251,24 @@ describe("legacy gitnexus removal still works", () => {
     expect(result.removedLegacy).toBe(true);
   });
 
+  test("legacy gitnexus npx bridge triggers BOTH removedLegacy and removedNpxBridge", () => {
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        mcpServers: {
+          gitnexus: {
+            command: "npx",
+            args: ["-y", "mcp-remote", "https://old/mcp/"],
+          },
+        },
+      }),
+      "claude",
+      "default",
+      DEFAULT_PROFILE,
+    );
+    expect(result.removedLegacy).toBe(true);
+    expect(result.removedNpxBridge).toBe(true);
+  });
+
   test("removes legacy gitnexus TOML block", () => {
     const result = mergeCodexTomlConfig(
       [
@@ -217,7 +301,7 @@ describe("legacy gitnexus removal still works", () => {
       "work",
       DEFAULT_PROFILE,
     );
-    expect(result.content).toContain('bearer_token_env_var = "COGRAPH_TOKEN_WORK"');
+    expect(result.content).toContain('bearer_token = "cgr_pat_abc123"');
     expect(result.content).toContain("[mcp_servers.other]");
     expect(result.content).not.toContain('command = "old"');
   });

@@ -141,10 +141,13 @@ function printClientResult(result: ClientWriteResult): void {
       `${result.client}: removed legacy gitnexus MCP entry (replaced by cograph)`,
     );
   }
-}
-
-function quoteForShell(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+  if (result.removedNpxBridge) {
+    const detail =
+      result.client === "codex"
+        ? "removed legacy bearer_token_env_var (token is now inlined in config.toml)"
+        : "removed legacy npx mcp-remote bridge (now using direct HTTP)";
+    console.log(`${result.client}: ${detail}`);
+  }
 }
 
 async function runSetup(options: SetupOptions): Promise<void> {
@@ -175,17 +178,10 @@ async function runSetup(options: SetupOptions): Promise<void> {
   console.log(`Saved profile "${options.profile}" to ${configPath()}`);
   console.log(`Token: ${redactToken(profile.token)}`);
 
-  const codexInstructions: { envVar: string; token: string }[] = [];
   for (const client of resolved.clients) {
     try {
       const result = await configureClient(client, options.profile, profile);
       printClientResult(result);
-      if (client === "codex" && result.codexTokenEnvVar) {
-        codexInstructions.push({
-          envVar: result.codexTokenEnvVar,
-          token: profile.token,
-        });
-      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`${client}: could not update config: ${message}`);
@@ -206,17 +202,6 @@ async function runSetup(options: SetupOptions): Promise<void> {
       for (const { client, target } of installed) {
         console.log(`${client} skill: installed at ${target}`);
       }
-    }
-  }
-
-  if (codexInstructions.length > 0) {
-    console.log("");
-    console.log(
-      "Codex reads the PAT from an environment variable (the token is NOT stored in ~/.codex/config.toml).",
-    );
-    console.log("Add this to your shell rc (e.g. ~/.zshenv) and reload:");
-    for (const { envVar, token } of codexInstructions) {
-      console.log(`  export ${envVar}=${quoteForShell(token)}`);
     }
   }
 

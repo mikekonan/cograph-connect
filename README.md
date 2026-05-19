@@ -14,24 +14,15 @@ stacks.
 
 ## What It Installs
 
-Per client:
+Per client — **every client gets the same direct-HTTP shape**. No npx, no
+local proxy, no env-var dance:
 
 | Client | Config file | MCP entry shape | SKILL.md |
 |---|---|---|---|
+| Claude Desktop (`claude`) | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | `{ type: "http", url, headers: { Authorization: "Bearer …" } }` | — |
 | Claude Code (`claude-code`) | `~/.claude.json` | `{ type: "http", url, headers: { Authorization: "Bearer …" } }` | `~/.claude/skills/cograph-connect/` |
 | Cursor (`cursor`) | `~/.cursor/mcp.json` | `{ url, headers: { Authorization: "Bearer …" } }` | — |
-| Codex (`codex`) | `~/.codex/config.toml` | `[mcp_servers.cograph]` with `url` + `bearer_token_env_var = "COGRAPH_TOKEN_<PROFILE>"` | `~/.codex/skills/cograph-connect/` |
-| Claude Desktop (`claude`) | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | `npx -y mcp-remote <url> --header "Authorization: Bearer …"` with `env: { NODE_OPTIONS: "--use-system-ca" }` | — |
-
-### Why Claude Desktop is special
-
-Claude Desktop's `claude_desktop_config.json` schema accepts only stdio MCP
-servers (`command` + `args`); it has no native field for a remote HTTP URL.
-For that one client, `setup` writes a thin stdio bridge via the community
-[`mcp-remote`](https://github.com/geelen/mcp-remote) package. The
-`NODE_OPTIONS=--use-system-ca` env makes its Node read the OS keychain so
-internal hosts behind a corporate CA (e.g. `*.internal.example.com`) verify out of
-the box.
+| Codex (`codex`) | `~/.codex/config.toml` | `[mcp_servers.cograph]` with `url` + `bearer_token = "<pat>"` | `~/.codex/skills/cograph-connect/` |
 
 The official Anthropic alternative for remote MCP in Claude Desktop is
 **Settings → Connectors** (the GUI flow). That's separate from
@@ -41,17 +32,10 @@ The official Anthropic alternative for remote MCP in Claude Desktop is
 
 - Source of truth: `~/.config/cograph-connect/config.json` (mode `0600`,
   directory mode `0700`). Updated by `cograph-connect setup`.
-- The same token is written **inline** into the JSON configs of Claude
-  Code, Cursor, and Claude Desktop (since their schemas accept a literal
-  `Authorization: Bearer …` value). These files inherit the user's
+- The same token is written **inline** into every client's config file as
+  a literal `Authorization: Bearer …` value (JSON clients) or
+  `bearer_token = "…"` line (Codex TOML). These files inherit the user's
   default permissions — restrict if needed.
-- For **Codex**, the token is *not* written into `config.toml`. Codex
-  reads it from an env var. `setup` prints the exact line to add to your
-  shell rc, e.g.:
-
-  ```bash
-  export COGRAPH_TOKEN_DEFAULT='cgr_pat_…'
-  ```
 
 ## Token Scopes
 
@@ -89,19 +73,29 @@ any existing `mcpServers.gitnexus` entry (JSON clients) or
 backed up, and the legacy entry is removed in favour of the new
 `cograph` entry.
 
-## Upgrading from 0.3.x → 0.4.x
+## Upgrading from older versions
 
-0.3.x configured every client to launch a local `cograph-connect mcp`
-proxy via `npx`. 0.4.x dropped the proxy entirely. To migrate:
+Previous versions used two transports that we've since dropped:
+
+- **0.3.x** — every client launched a local `cograph-connect mcp` proxy
+  via `npx`.
+- **0.4.x – 0.5.x** — Claude Desktop went through the community
+  `mcp-remote` stdio→HTTP bridge (also `npx`), and Codex stored its PAT
+  in a `COGRAPH_TOKEN_<PROFILE>` shell env var referenced via
+  `bearer_token_env_var`.
+
+Re-running setup migrates both:
 
 ```bash
 npx -y cograph-connect@latest setup
 ```
 
-That re-writes every `mcpServers.cograph` entry into the new direct-HTTP
-shape. Old `.bak.*` files preserve the previous state. Restart each
-client to pick up the new config. For Codex, also add the printed
-`export COGRAPH_TOKEN_<PROFILE>=…` line to your shell rc.
+That actively detects legacy entries — any `npx -y mcp-remote …` block
+in a JSON config and any `bearer_token_env_var = …` line in
+`~/.codex/config.toml` — and rewrites them to the new direct-HTTP shape
+with the token inlined. Old `.bak.*` files preserve the previous state.
+Restart each client to pick up the new config; you can drop any
+`export COGRAPH_TOKEN_…=…` lines from your shell rc.
 
 ## Troubleshooting
 
@@ -128,24 +122,13 @@ underlying cause and a targeted hint. Common cases:
   required).
 - **HTTP 502 / 504** — backend reindexing; retry in a minute.
 
-### Codex doesn't pick up the token
-
-`config.toml` only contains an env-var *name*, not the token. Codex reads
-the actual value from your shell environment at request time. Verify:
-
-```bash
-echo $COGRAPH_TOKEN_DEFAULT   # should print your PAT
-```
-
-If empty, add the `export` line to `~/.zshenv` (loaded by every shell on
-login, including the one Codex inherits) and reload.
-
 ### `repository_id is required`
 
-An agent called `cograph.retrieve` / `search_code` / `outline` /
-`read_node` / `read_file_range` / `related` without a `repository`
-argument. The SKILL.md tells agents to call `cograph.repositories`
-first; if you see this in agent traces, the agent skipped that step.
+An agent called `cograph_retrieve` / `cograph_search_code` /
+`cograph_outline` / `cograph_read_node` / `cograph_read_file_range` /
+`cograph_related` without a `repository` argument. The SKILL.md tells
+agents to call `cograph_repositories` first; if you see this in agent
+traces, the agent skipped that step.
 
 ### "Failed to reconnect to claude.ai Cograph"
 
