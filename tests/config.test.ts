@@ -112,21 +112,27 @@ describe("client config — Cursor (direct HTTP, no type field)", () => {
   });
 });
 
-describe("client config — Claude Desktop (direct HTTP, no npx bridge)", () => {
-  test("writes type:http entry — never npx/mcp-remote", () => {
-    const result = mergeJsonMcpConfig(null, "claude", "default", DEFAULT_PROFILE);
-    const merged = JSON.parse(result.content);
-    expect(merged.mcpServers.cograph).toEqual({
-      type: "http",
-      url: "https://cograph.example.com/mcp/",
-      headers: { Authorization: "Bearer cgr_pat_abc123" },
-    });
-    expect(result.content).not.toContain("npx");
-    expect(result.content).not.toContain("mcp-remote");
-    expect(result.content).not.toContain("NODE_OPTIONS");
+describe("client config — Claude Desktop (mcp-remote stdio bridge)", () => {
+  test("writes mcp-remote command — its config validator only accepts stdio", () => {
+    const merged = JSON.parse(
+      mergeJsonMcpConfig(null, "claude", "default", DEFAULT_PROFILE).content,
+    );
+    const entry = merged.mcpServers.cograph;
+    expect(entry.command).toBe("npx");
+    expect(entry.args).toEqual([
+      "-y",
+      "mcp-remote",
+      "https://cograph.example.com/mcp/",
+      "--header",
+      "Authorization: Bearer cgr_pat_abc123",
+    ]);
+    expect(entry.env).toEqual({ NODE_OPTIONS: "--use-system-ca" });
   });
 
-  test("active cleanup: legacy npx/mcp-remote entry is replaced and flagged", () => {
+  test("rewriting an existing npx bridge entry is NOT flagged as legacy", () => {
+    // Claude Desktop legitimately uses the bridge today — finding npx in the
+    // existing config is normal state, not a migration signal. The user would
+    // see "removed legacy npx bridge" on every setup otherwise.
     const result = mergeJsonMcpConfig(
       JSON.stringify({
         mcpServers: {
@@ -147,16 +153,40 @@ describe("client config — Claude Desktop (direct HTTP, no npx bridge)", () => 
       "default",
       DEFAULT_PROFILE,
     );
+    expect(result.removedNpxBridge).toBe(false);
+  });
+});
+
+describe("Claude Code legacy cleanup (npx bridge → direct HTTP)", () => {
+  test("active cleanup: npx/mcp-remote entry in claude-code is replaced and flagged", () => {
+    // Claude Code DOES support direct HTTP; an npx-shaped entry there is
+    // genuine legacy from older cograph-connect versions.
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        mcpServers: {
+          cograph: {
+            command: "npx",
+            args: [
+              "-y",
+              "mcp-remote",
+              "https://old.example.com/mcp/",
+              "--header",
+              "Authorization: Bearer old_token",
+            ],
+          },
+        },
+      }),
+      "claude-code",
+      "default",
+      DEFAULT_PROFILE,
+    );
     const merged = JSON.parse(result.content);
     expect(merged.mcpServers.cograph.type).toBe("http");
     expect(merged.mcpServers.cograph.command).toBeUndefined();
-    expect(merged.mcpServers.cograph.args).toBeUndefined();
-    expect(merged.mcpServers.cograph.env).toBeUndefined();
     expect(result.removedNpxBridge).toBe(true);
-    expect(result.content).not.toContain("mcp-remote");
   });
 
-  test("does NOT flag npx cleanup for an already-direct-HTTP entry", () => {
+  test("does NOT flag npx cleanup for an already-direct-HTTP claude-code entry", () => {
     const result = mergeJsonMcpConfig(
       JSON.stringify({
         mcpServers: {
@@ -167,7 +197,7 @@ describe("client config — Claude Desktop (direct HTTP, no npx bridge)", () => 
           },
         },
       }),
-      "claude",
+      "claude-code",
       "default",
       DEFAULT_PROFILE,
     );
@@ -251,7 +281,9 @@ describe("legacy gitnexus removal still works", () => {
     expect(result.removedLegacy).toBe(true);
   });
 
-  test("legacy gitnexus npx bridge triggers BOTH removedLegacy and removedNpxBridge", () => {
+  test("legacy gitnexus npx bridge in claude-code triggers both flags", () => {
+    // For claude-code the new entry is direct HTTP, so an npx bridge in the
+    // old gitnexus slot is genuine legacy.
     const result = mergeJsonMcpConfig(
       JSON.stringify({
         mcpServers: {
@@ -261,7 +293,7 @@ describe("legacy gitnexus removal still works", () => {
           },
         },
       }),
-      "claude",
+      "claude-code",
       "default",
       DEFAULT_PROFILE,
     );

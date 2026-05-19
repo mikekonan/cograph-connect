@@ -14,15 +14,31 @@ stacks.
 
 ## What It Installs
 
-Per client — **every client gets the same direct-HTTP shape**. No npx, no
-local proxy, no env-var dance:
+Per client. Three of the four clients get direct HTTP with an inline
+Bearer header — Claude Desktop's config validator only accepts stdio,
+so for that one we shell out through the `mcp-remote` bridge:
 
 | Client | Config file | MCP entry shape | SKILL.md |
 |---|---|---|---|
-| Claude Desktop (`claude`) | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | `{ type: "http", url, headers: { Authorization: "Bearer …" } }` | — |
 | Claude Code (`claude-code`) | `~/.claude.json` | `{ type: "http", url, headers: { Authorization: "Bearer …" } }` | `~/.claude/skills/cograph-connect/` |
 | Cursor (`cursor`) | `~/.cursor/mcp.json` | `{ url, headers: { Authorization: "Bearer …" } }` | — |
 | Codex (`codex`) | `~/.codex/config.toml` | `[mcp_servers.cograph]` with `url` + `bearer_token = "<pat>"` | `~/.codex/skills/cograph-connect/` |
+| Claude Desktop (`claude`) | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | `npx -y mcp-remote <url> --header "Authorization: Bearer …"` with `env: { NODE_OPTIONS: "--use-system-ca" }` | — |
+
+### Why Claude Desktop is special
+
+Claude Desktop's `claude_desktop_config.json` schema accepts only stdio
+MCP servers (`command` + `args`). Writing a `{ type: "http", url, headers }`
+entry there produces a startup warning:
+
+> The following entries in `claude_desktop_config.json` are not valid MCP
+> server configurations and were skipped: cograph
+
+For that one client, `setup` writes a thin stdio bridge via the community
+[`mcp-remote`](https://github.com/geelen/mcp-remote) package. The
+`NODE_OPTIONS=--use-system-ca` env makes its Node read the OS keychain so
+internal hosts behind a corporate CA (e.g. `*.internal.example.com`) verify out
+of the box.
 
 The official Anthropic alternative for remote MCP in Claude Desktop is
 **Settings → Connectors** (the GUI flow). That's separate from
@@ -75,27 +91,34 @@ backed up, and the legacy entry is removed in favour of the new
 
 ## Upgrading from older versions
 
-Previous versions used two transports that we've since dropped:
+- **0.3.x** routed every client through a local `cograph-connect mcp`
+  proxy launched by `npx`. 0.4.x dropped that.
+- **0.4.x – 0.5.x** kept the npx-based `mcp-remote` bridge for *every*
+  JSON client (including Claude Code and Cursor, where it wasn't needed)
+  and stored the Codex PAT in a `COGRAPH_TOKEN_<PROFILE>` shell env var
+  referenced via `bearer_token_env_var`.
 
-- **0.3.x** — every client launched a local `cograph-connect mcp` proxy
-  via `npx`.
-- **0.4.x – 0.5.x** — Claude Desktop went through the community
-  `mcp-remote` stdio→HTTP bridge (also `npx`), and Codex stored its PAT
-  in a `COGRAPH_TOKEN_<PROFILE>` shell env var referenced via
-  `bearer_token_env_var`.
-
-Re-running setup migrates both:
+0.6.x narrows the npx bridge to **Claude Desktop only** (the one client
+whose config schema actually requires stdio) and inlines the Codex
+token directly in `config.toml`. Re-running setup migrates both:
 
 ```bash
 npx -y cograph-connect@latest setup
 ```
 
-That actively detects legacy entries — any `npx -y mcp-remote …` block
-in a JSON config and any `bearer_token_env_var = …` line in
-`~/.codex/config.toml` — and rewrites them to the new direct-HTTP shape
-with the token inlined. Old `.bak.*` files preserve the previous state.
-Restart each client to pick up the new config; you can drop any
-`export COGRAPH_TOKEN_…=…` lines from your shell rc.
+`setup` actively detects legacy entries and rewrites them:
+
+- Any `npx -y mcp-remote …` block in a Claude Code or Cursor config →
+  replaced with `{ type: "http", url, headers }` and reported as
+  `removed legacy npx mcp-remote bridge`. (Claude Desktop keeps its
+  bridge — that's not legacy there.)
+- Any `bearer_token_env_var = …` line in `~/.codex/config.toml` →
+  replaced with inline `bearer_token = "…"` and reported as
+  `removed legacy bearer_token_env_var`.
+
+Old `.bak.*` files preserve the previous state. Restart each client to
+pick up the new config; you can drop any `export COGRAPH_TOKEN_…=…`
+lines from your shell rc.
 
 ## Troubleshooting
 

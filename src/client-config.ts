@@ -23,14 +23,25 @@ export type MergeResult = {
 export const MCP_SERVER_NAME = "cograph";
 export const LEGACY_MCP_SERVER_NAME = "gitnexus";
 
+const MCP_REMOTE_PACKAGE = "mcp-remote";
+
 /**
  * Builds the MCP server entry to write into each client's config.
  *
- * Every client gets the same shape: direct HTTP with an inline `Authorization:
- * Bearer …` header. No npx, no env-var dance, no stdio bridge. Claude Desktop's
- * config schema now accepts `type: "http"` natively, so we no longer shell out
- * through the community `mcp-remote` package — and the corporate-CA story is
- * handled by the client's own HTTP stack (OS trust store), not by Node.
+ * Three of the four clients (Claude Code, Cursor, Codex) accept a direct
+ * remote-HTTP entry — we write the URL and inline `Authorization: Bearer …`
+ * header straight into the config. Codex also gets the token inlined as
+ * `bearer_token = "…"` in its TOML block (no env-var dance).
+ *
+ * Claude Desktop is the exception: its `claude_desktop_config.json` validator
+ * only accepts stdio MCP servers (`command` + `args`); the official remote-HTTP
+ * path lives in `Settings → Connectors`, not in the JSON file. Writing a
+ * `{ type: "http", url, headers }` entry produces a
+ * "not valid MCP server configurations and were skipped: cograph" warning at
+ * startup. So for Claude Desktop we shell out to the community
+ * [`mcp-remote`](https://github.com/geelen/mcp-remote) stdio→HTTP bridge with
+ * `NODE_OPTIONS=--use-system-ca` so its Node trusts whatever the OS trust
+ * store trusts (covers corporate CAs without extra config).
  */
 function buildEntry(
   client: AgentClient,
@@ -39,6 +50,17 @@ function buildEntry(
 ): Record<string, unknown> {
   switch (client) {
     case "claude":
+      return {
+        command: "npx",
+        args: [
+          "-y",
+          MCP_REMOTE_PACKAGE,
+          profile.url,
+          "--header",
+          `Authorization: Bearer ${profile.token}`,
+        ],
+        env: { NODE_OPTIONS: "--use-system-ca" },
+      };
     case "claude-code":
       return {
         type: "http",
@@ -120,11 +142,18 @@ export function mergeJsonMcpConfig(
     ...rest
   } = existingServers;
   const removedLegacy = legacyEntry !== undefined;
+  const newEntry = buildEntry(client, profileName, profile);
+  // Detect "the previous entry used the npx/mcp-remote stdio bridge but the
+  // new shape doesn't" — that's the migration we want to surface. Claude
+  // Desktop legitimately uses the bridge today (its config validator rejects
+  // remote HTTP), so a npx-shaped existing entry there is NOT legacy.
+  const newEntryIsNpxBridge = isNpxMcpRemoteEntry(newEntry);
   const removedNpxBridge =
-    isNpxMcpRemoteEntry(existingCograph) || isNpxMcpRemoteEntry(legacyEntry);
+    !newEntryIsNpxBridge &&
+    (isNpxMcpRemoteEntry(existingCograph) || isNpxMcpRemoteEntry(legacyEntry));
   record.mcpServers = {
     ...rest,
-    [MCP_SERVER_NAME]: buildEntry(client, profileName, profile),
+    [MCP_SERVER_NAME]: newEntry,
   };
   return {
     content: `${JSON.stringify(record, null, 2)}\n`,
