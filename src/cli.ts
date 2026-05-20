@@ -9,7 +9,6 @@ import {
   upsertProfile,
 } from "./config.js";
 import {
-  codexEnvVarName,
   configureClient,
   manualSnippet,
   type ClientWriteResult,
@@ -195,17 +194,14 @@ async function runSetup(options: SetupOptions): Promise<void> {
   }
 
   if (codexConfigured) {
-    // Codex reads the bearer from an env var (its CLI ignores inline
-    // bearer_token). Tell the user the exact export line so the next
-    // `codex` session sees the token — without this, every Codex MCP
-    // request 401s silently.
-    const envVarName = codexEnvVarName(options.profile);
+    // 0.8.1+: the token now lives in `[shell_environment_policy.set]` inside
+    // `~/.codex/config.toml`, which Codex injects into the env of every MCP
+    // child process. Both CLI and Desktop read the same file — no shell rc
+    // or launchctl needed. Restart any already-running Codex sessions so
+    // they re-read the config.
     console.log("");
     console.log(
-      `codex: export ${envVarName}=<your-cograph-pat> in your shell (then restart codex).`,
-    );
-    console.log(
-      `codex: add it to ~/.zshrc or ~/.bashrc to make it persist across sessions.`,
+      `codex: token written to ~/.codex/config.toml under [shell_environment_policy.set] — restart any open Codex CLI or Desktop sessions to pick it up.`,
     );
   }
 

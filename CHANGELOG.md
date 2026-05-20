@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.8.1
+
+Fix: 0.8.0 dropped the user-facing burden of "export COGRAPH_TOKEN= and
+also `launchctl setenv COGRAPH_TOKEN=` for Codex Desktop". Both CLI and
+Desktop now pick up the token from Codex's own config.
+
+0.8.0 reverted Codex auth to `bearer_token_env_var = "COGRAPH_TOKEN"` —
+correct, but the *env var itself* still had to be exported manually.
+For Codex CLI that meant a line in `~/.zshrc`. For Codex Desktop
+(macOS GUI app), launchd-spawned processes don't read `~/.zshrc` — the
+user also had to `launchctl setenv` (or set up a LaunchAgent for
+persistence). Easy to miss one of the two paths.
+
+0.8.1 closes the gap by writing the token into Codex's
+`[shell_environment_policy.set]` block:
+
+```toml
+[shell_environment_policy.set]
+COGRAPH_TOKEN = "cgr_pat_..."
+
+[mcp_servers.cograph]
+url = "https://cograph.example.com/mcp/"
+bearer_token_env_var = "COGRAPH_TOKEN"
+```
+
+Codex CLI and Codex Desktop both read the same `~/.codex/config.toml`
+and inject `shell_environment_policy.set` into every child process they
+spawn — including MCP HTTP-client lookups for `bearer_token_env_var`.
+No `~/.zshrc`, no `launchctl`, no LaunchAgent. Restart any open Codex
+sessions to pick up the new config.
+
+The merge is non-destructive — pre-existing keys in
+`[shell_environment_policy.set]` (e.g. `CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR`,
+`USE_BUILTIN_RIPGREP`) are preserved verbatim; only the
+`COGRAPH_TOKEN[_PROFILE]` key is rewritten.
+
 ## 0.8.0
 
 Fix: Codex MCP sessions silently 401-ing since 0.6.0.

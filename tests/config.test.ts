@@ -205,28 +205,76 @@ describe("Claude Code legacy cleanup (npx bridge → direct HTTP)", () => {
   });
 });
 
-describe("client config — Codex (TOML with bearer_token_env_var)", () => {
-  test("writes bearer_token_env_var, never inline bearer_token", () => {
+describe("client config — Codex (TOML, env-var auth + shell_environment_policy.set)", () => {
+  test("writes bearer_token_env_var in mcp_servers block AND token in shell_environment_policy.set", () => {
     // Codex's MCP client parses `bearer_token = "..."` but never applies it
     // as an Authorization header — sessions 401 silently. The only token-
-    // binding form Codex honours is `bearer_token_env_var = "<NAME>"` with
-    // the matching `export NAME=<token>` in the shell.
+    // binding form Codex honours is `bearer_token_env_var = "<NAME>"`, and
+    // Codex resolves <NAME> from its own [shell_environment_policy.set]
+    // block (so we don't need ~/.zshrc or launchctl).
     const result = mergeCodexTomlConfig(null, "default", DEFAULT_PROFILE);
     expect(result.content).toContain("[mcp_servers.cograph]");
     expect(result.content).toContain(
       'url = "https://cograph.example.com/mcp/"',
     );
     expect(result.content).toContain('bearer_token_env_var = "COGRAPH_TOKEN"');
-    // The actual token must NOT appear in the TOML on disk — it lives in
-    // the shell env var only.
-    expect(result.content).not.toContain("cgr_pat_abc123");
+    expect(result.content).toContain("[shell_environment_policy.set]");
+    expect(result.content).toContain('COGRAPH_TOKEN = "cgr_pat_abc123"');
+    // Critical: must NOT write inline bearer_token = "..." in mcp_servers
+    // block (that's the 0.6.0–0.7.0 broken shape Codex silently 401s on).
     expect(result.content).not.toMatch(/^\s*bearer_token\s*=/m);
   });
 
-  test("non-default profile uses a sanitized env var name", () => {
+  test("non-default profile uses a sanitized env var name in both blocks", () => {
     const result = mergeCodexTomlConfig("", "work-prod", DEFAULT_PROFILE);
     expect(result.content).toContain(
       'bearer_token_env_var = "COGRAPH_TOKEN_WORK_PROD"',
+    );
+    expect(result.content).toContain(
+      'COGRAPH_TOKEN_WORK_PROD = "cgr_pat_abc123"',
+    );
+  });
+
+  test("merges into an existing shell_environment_policy.set, preserving other keys", () => {
+    // The user's config may already have unrelated keys (CLAUDE_*, ripgrep
+    // toggle, etc.) in shell_environment_policy.set. cograph-connect must
+    // preserve them verbatim and only manage the COGRAPH_TOKEN key.
+    const result = mergeCodexTomlConfig(
+      [
+        "[shell_environment_policy.set]",
+        'CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR = "1"',
+        'USE_BUILTIN_RIPGREP = "1"',
+      ].join("\n"),
+      "default",
+      DEFAULT_PROFILE,
+    );
+    expect(result.content).toContain(
+      'CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR = "1"',
+    );
+    expect(result.content).toContain('USE_BUILTIN_RIPGREP = "1"');
+    expect(result.content).toContain('COGRAPH_TOKEN = "cgr_pat_abc123"');
+    // shell_environment_policy.set header appears exactly once — we didn't
+    // duplicate it as a new block.
+    const headerCount = (
+      result.content.match(/^\[shell_environment_policy\.set\]/gm) ?? []
+    ).length;
+    expect(headerCount).toBe(1);
+  });
+
+  test("replaces an out-of-date COGRAPH_TOKEN value in shell_environment_policy.set", () => {
+    const result = mergeCodexTomlConfig(
+      [
+        "[shell_environment_policy.set]",
+        'CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR = "1"',
+        'COGRAPH_TOKEN = "stale_old_value"',
+      ].join("\n"),
+      "default",
+      DEFAULT_PROFILE,
+    );
+    expect(result.content).toContain('COGRAPH_TOKEN = "cgr_pat_abc123"');
+    expect(result.content).not.toContain("stale_old_value");
+    expect(result.content).toContain(
+      'CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR = "1"',
     );
   });
 

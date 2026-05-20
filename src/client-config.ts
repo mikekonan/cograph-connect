@@ -185,70 +185,133 @@ export function mergeJsonMcpConfig(
 /**
  * The 0.6.0–0.7.0 cograph-connect inlined the token as `bearer_token = "…"`
  * directly into the Codex TOML block. The Codex CLI parses that key but the
- * MCP runtime never reads it as an Authorization header — every session 401s
- * silently. We now revert to `bearer_token_env_var = "<NAME>"` (the only
- * binding form Codex actually applies) and rely on the user exporting the
- * matching env var in their shell. If the legacy inline-token block is still
- * there, strip it cleanly and report it via `removedNpxBridge` so the CLI
- * can announce the migration in the same channel as other legacy cleanups.
+ * MCP runtime never reads it as an Authorization header — every session
+ * 401s silently. The only binding form Codex actually applies is
+ * `bearer_token_env_var = "<NAME>"`, which makes Codex look up that env
+ * var name at MCP-connect time.
  *
- * (The flag name is `removedNpxBridge` for symmetry with the JSON path —
- * "we cleaned up a legacy non-direct-HTTP setup". Codex never used npx, but
- * the inlined-token shape was the same kind of broken-coupling cleanup as
- * the JSON-side bridge removal.)
+ * 0.8.0 reverted to `bearer_token_env_var` but pushed the env-export burden
+ * onto the user (manual `export COGRAPH_TOKEN=…` in `~/.zshrc` for CLI and
+ * `launchctl setenv` for Desktop — two different mechanisms, easy to miss
+ * one). 0.8.1 closes that gap by writing the token into Codex's own
+ * `[shell_environment_policy.set]` block, which Codex injects into the env
+ * of every MCP child process it spawns. Both CLI and Desktop read the same
+ * `~/.codex/config.toml`, so a single edit covers both — no shell rc, no
+ * launchctl, no LaunchAgent.
+ *
+ * The merge needs to handle three sections:
+ *  - `[mcp_servers.cograph]` — fully replaced; pre-existing inline
+ *    `bearer_token = …` is treated as legacy (the 0.6.0–0.7.0 regression)
+ *    and surfaced via `removedNpxBridge`.
+ *  - `[mcp_servers.gitnexus]` — legacy server name from gitnexus era;
+ *    dropped entirely and surfaced via `removedLegacy`.
+ *  - `[shell_environment_policy.set]` — MERGED, not replaced. Other keys
+ *    (CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR, USE_BUILTIN_RIPGREP, etc.)
+ *    are preserved verbatim; only our managed `COGRAPH_TOKEN[_PROFILE]` key
+ *    is rewritten. If the section doesn't exist yet, it's created.
+ *
+ * The flag name `removedNpxBridge` is kept for symmetry with the JSON
+ * code path — "we cleaned up a legacy non-direct-HTTP setup". Codex never
+ * used npx, but the inline-token shape was the same kind of broken-
+ * coupling cleanup as the JSON-side bridge removal.
  */
 export function mergeCodexTomlConfig(
   raw: string | null,
   profileName: string,
   profile: Profile,
 ): MergeResult {
+  const envVarName = codexEnvVarName(profileName);
+  const managedTokenLine = `${envVarName} = ${JSON.stringify(profile.token)}`;
   const lines = (raw ?? "").split(/\r?\n/);
   const output: string[] = [];
-  let skipping = false;
+
   let removedLegacy = false;
   let removedInlineTokenBlock = false;
+  let mode: "default" | "skip-cograph" | "skip-gitnexus" | "shell-env" =
+    "default";
   let currentBlockHasInlineToken = false;
+  let shellEnvSectionFound = false;
+
+  const closeMode = () => {
+    if (mode === "skip-cograph" && currentBlockHasInlineToken) {
+      removedInlineTokenBlock = true;
+    }
+    if (mode === "shell-env") {
+      // Append our managed token line at the end of the shell-env block
+      // (other keys from the user's existing config were emitted as-is
+      // during the section; we re-emit our managed key here so it's
+      // always present and points at the latest token value).
+      output.push(managedTokenLine);
+    }
+    currentBlockHasInlineToken = false;
+    mode = "default";
+  };
+
   for (const line of lines) {
-    if (/^\s*\[mcp_servers\.cograph\]\s*$/.test(line)) {
-      skipping = true;
-      currentBlockHasInlineToken = false;
+    const isHeader = /^\s*\[/.test(line);
+    if (isHeader && mode !== "default") {
+      closeMode();
+      // Fall through to default-mode processing of this new header.
+    }
+    if (mode === "default") {
+      if (/^\s*\[mcp_servers\.cograph\]\s*$/.test(line)) {
+        mode = "skip-cograph";
+        continue;
+      }
+      if (/^\s*\[mcp_servers\.gitnexus\]\s*$/.test(line)) {
+        mode = "skip-gitnexus";
+        removedLegacy = true;
+        continue;
+      }
+      if (/^\s*\[shell_environment_policy\.set\]\s*$/.test(line)) {
+        mode = "shell-env";
+        shellEnvSectionFound = true;
+        output.push(line);
+        continue;
+      }
+      output.push(line);
       continue;
     }
-    if (/^\s*\[mcp_servers\.gitnexus\]\s*$/.test(line)) {
-      skipping = true;
-      removedLegacy = true;
-      currentBlockHasInlineToken = false;
-      continue;
-    }
-    if (skipping) {
-      // `bearer_token =` only — exclude `bearer_token_env_var =` (that's the
-      // good shape; if it's already there we're idempotently rewriting it
-      // and there's nothing to migrate).
+    if (mode === "skip-cograph") {
       if (/^\s*bearer_token\s*=/.test(line)) {
         currentBlockHasInlineToken = true;
       }
-      if (/^\s*\[/.test(line)) {
-        if (currentBlockHasInlineToken) removedInlineTokenBlock = true;
-        skipping = false;
-        currentBlockHasInlineToken = false;
-      }
+      continue;
     }
-    if (!skipping) {
+    if (mode === "skip-gitnexus") {
+      continue;
+    }
+    if (mode === "shell-env") {
+      // Strip any pre-existing line for OUR managed key — we re-emit it via
+      // closeMode() so the value always reflects the current profile.token.
+      // Other keys in the section are preserved verbatim.
+      const keyMatch = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+      if (keyMatch && keyMatch[1] === envVarName) {
+        continue;
+      }
       output.push(line);
+      continue;
     }
   }
-  if (skipping && currentBlockHasInlineToken) removedInlineTokenBlock = true;
+  closeMode();
+
   while (output.length > 0 && output[output.length - 1] === "") {
     output.pop();
   }
-  const envVarName = codexEnvVarName(profileName);
-  const block = [
+
+  let prelude = output.join("\n");
+  if (!shellEnvSectionFound) {
+    const newSection = `[shell_environment_policy.set]\n${managedTokenLine}`;
+    prelude = prelude.length ? `${prelude}\n\n${newSection}` : newSection;
+  }
+
+  const cographBlock = [
     "[mcp_servers.cograph]",
     `url = ${JSON.stringify(profile.url)}`,
     `bearer_token_env_var = ${JSON.stringify(envVarName)}`,
   ];
   return {
-    content: `${output.length ? `${output.join("\n")}\n\n` : ""}${block.join("\n")}\n`,
+    content: `${prelude.length ? `${prelude}\n\n` : ""}${cographBlock.join("\n")}\n`,
     removedLegacy,
     removedNpxBridge: removedInlineTokenBlock,
   };
