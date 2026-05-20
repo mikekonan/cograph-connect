@@ -9,6 +9,7 @@ import {
   upsertProfile,
 } from "./config.js";
 import {
+  codexEnvVarName,
   configureClient,
   manualSnippet,
   type ClientWriteResult,
@@ -144,7 +145,7 @@ function printClientResult(result: ClientWriteResult): void {
   if (result.removedNpxBridge) {
     const detail =
       result.client === "codex"
-        ? "removed legacy bearer_token_env_var (token is now inlined in config.toml)"
+        ? "removed legacy inline bearer_token from config.toml (Codex's MCP client ignored it — switched to bearer_token_env_var)"
         : "removed legacy npx mcp-remote bridge (now using direct HTTP)";
     console.log(`${result.client}: ${detail}`);
   }
@@ -178,10 +179,12 @@ async function runSetup(options: SetupOptions): Promise<void> {
   console.log(`Saved profile "${options.profile}" to ${configPath()}`);
   console.log(`Token: ${redactToken(profile.token)}`);
 
+  let codexConfigured = false;
   for (const client of resolved.clients) {
     try {
       const result = await configureClient(client, options.profile, profile);
       printClientResult(result);
+      if (client === "codex" && result.changed) codexConfigured = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`${client}: could not update config: ${message}`);
@@ -189,6 +192,21 @@ async function runSetup(options: SetupOptions): Promise<void> {
         `Manual snippet:\n${manualSnippet(client, options.profile, profile)}`,
       );
     }
+  }
+
+  if (codexConfigured) {
+    // Codex reads the bearer from an env var (its CLI ignores inline
+    // bearer_token). Tell the user the exact export line so the next
+    // `codex` session sees the token — without this, every Codex MCP
+    // request 401s silently.
+    const envVarName = codexEnvVarName(options.profile);
+    console.log("");
+    console.log(
+      `codex: export ${envVarName}=<your-cograph-pat> in your shell (then restart codex).`,
+    );
+    console.log(
+      `codex: add it to ~/.zshrc or ~/.bashrc to make it persist across sessions.`,
+    );
   }
 
   if (options.skill !== false) {

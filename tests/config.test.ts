@@ -205,39 +205,58 @@ describe("Claude Code legacy cleanup (npx bridge → direct HTTP)", () => {
   });
 });
 
-describe("client config — Codex (TOML with inline token)", () => {
-  test("writes bearer_token inline, never env-var", () => {
+describe("client config — Codex (TOML with bearer_token_env_var)", () => {
+  test("writes bearer_token_env_var, never inline bearer_token", () => {
+    // Codex's MCP client parses `bearer_token = "..."` but never applies it
+    // as an Authorization header — sessions 401 silently. The only token-
+    // binding form Codex honours is `bearer_token_env_var = "<NAME>"` with
+    // the matching `export NAME=<token>` in the shell.
     const result = mergeCodexTomlConfig(null, "default", DEFAULT_PROFILE);
     expect(result.content).toContain("[mcp_servers.cograph]");
     expect(result.content).toContain(
       'url = "https://cograph.example.com/mcp/"',
     );
-    expect(result.content).toContain('bearer_token = "cgr_pat_abc123"');
-    expect(result.content).not.toContain("bearer_token_env_var");
-    expect(result.content).not.toContain("COGRAPH_TOKEN_");
+    expect(result.content).toContain('bearer_token_env_var = "COGRAPH_TOKEN"');
+    // The actual token must NOT appear in the TOML on disk — it lives in
+    // the shell env var only.
+    expect(result.content).not.toContain("cgr_pat_abc123");
+    expect(result.content).not.toMatch(/^\s*bearer_token\s*=/m);
   });
 
-  test("active cleanup: legacy bearer_token_env_var block is replaced and flagged", () => {
-    const result = mergeCodexTomlConfig(
-      [
-        "[mcp_servers.cograph]",
-        'url = "https://old.example.com/mcp/"',
-        'bearer_token_env_var = "COGRAPH_TOKEN_DEFAULT"',
-      ].join("\n"),
-      "default",
-      DEFAULT_PROFILE,
+  test("non-default profile uses a sanitized env var name", () => {
+    const result = mergeCodexTomlConfig("", "work-prod", DEFAULT_PROFILE);
+    expect(result.content).toContain(
+      'bearer_token_env_var = "COGRAPH_TOKEN_WORK_PROD"',
     );
-    expect(result.content).toContain('bearer_token = "cgr_pat_abc123"');
-    expect(result.content).not.toContain("bearer_token_env_var");
-    expect(result.removedNpxBridge).toBe(true);
   });
 
-  test("does NOT flag cleanup for an already-inline-token block", () => {
+  test("active cleanup: legacy inline bearer_token block is replaced and flagged", () => {
+    // 0.6.0–0.7.0 cograph-connect inlined the token as `bearer_token = "..."`
+    // — Codex parsed it but ignored it. Detect that shape and migrate to
+    // `bearer_token_env_var`, surfacing the cleanup via removedNpxBridge so
+    // the CLI announces it in the same channel as other legacy cleanups.
     const result = mergeCodexTomlConfig(
       [
         "[mcp_servers.cograph]",
         'url = "https://old.example.com/mcp/"',
         'bearer_token = "old_token"',
+      ].join("\n"),
+      "default",
+      DEFAULT_PROFILE,
+    );
+    expect(result.content).toContain('bearer_token_env_var = "COGRAPH_TOKEN"');
+    expect(result.content).not.toContain('bearer_token = "old_token"');
+    expect(result.removedNpxBridge).toBe(true);
+  });
+
+  test("does NOT flag cleanup for an already-env-var block", () => {
+    // Idempotent rewrite — the existing block already has the good shape,
+    // nothing to migrate.
+    const result = mergeCodexTomlConfig(
+      [
+        "[mcp_servers.cograph]",
+        'url = "https://old.example.com/mcp/"',
+        'bearer_token_env_var = "COGRAPH_TOKEN"',
       ].join("\n"),
       "default",
       DEFAULT_PROFILE,
@@ -333,7 +352,9 @@ describe("legacy gitnexus removal still works", () => {
       "work",
       DEFAULT_PROFILE,
     );
-    expect(result.content).toContain('bearer_token = "cgr_pat_abc123"');
+    expect(result.content).toContain(
+      'bearer_token_env_var = "COGRAPH_TOKEN_WORK"',
+    );
     expect(result.content).toContain("[mcp_servers.other]");
     expect(result.content).not.toContain('command = "old"');
   });

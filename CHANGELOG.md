@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.8.0
+
+Fix: Codex MCP sessions silently 401-ing since 0.6.0.
+
+0.6.0 ("unify on direct HTTP for all clients, drop npx + env-var")
+moved Codex from `bearer_token_env_var = "<NAME>"` to inline
+`bearer_token = "<token>"` in `~/.codex/config.toml` — mirroring the
+shape that worked for Claude Code, Cursor, and Claude Desktop. The
+Codex CLI parses `bearer_token` but its MCP client never applies it as
+an `Authorization` header, so every request to Cograph went out
+anonymously and the server returned 401. There was no error in the
+Codex UI — sessions just produced empty tool lists.
+
+0.8.0 reverts the Codex path to `bearer_token_env_var`, the only
+binding form Codex actually honours:
+
+```toml
+[mcp_servers.cograph]
+url = "https://cograph.example.com/mcp/"
+bearer_token_env_var = "COGRAPH_TOKEN"
+```
+
+`setup` now prints the matching `export COGRAPH_TOKEN=<token>` line
+after configuring Codex, with a reminder to persist it in
+`~/.zshrc` / `~/.bashrc`. The actual token is no longer written to
+disk in `config.toml` (only the env var name is).
+
+Non-default profiles get `COGRAPH_TOKEN_<UPPER_SANITIZED>` (e.g.
+`work-prod` → `COGRAPH_TOKEN_WORK_PROD`), so multi-profile setups
+don't collide.
+
+Migration: re-run `cograph-connect setup`. The legacy inline
+`bearer_token = "..."` line is detected and replaced; the CLI prints
+the migration notice and the export line.
+
+Other clients (Claude Code, Cursor, Claude Desktop) are unchanged.
+
 ## 0.5.0
 
 `SKILL.md` is now a thin stub that points clients at the server-side
