@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.2
+
+Patch: 0.8.1's `mergeCodexTomlConfig` was a line-by-line scanner that
+emitted the managed `COGRAPH_TOKEN = …` line at section-close time,
+which interacted badly with input that had a blank line right before
+the next `[section]` header — `COGRAPH_TOKEN` ended up after the blank
+and right against the next section header, no separator. Functionally
+fine (TOML doesn't require blank-line separators), but the output
+looked broken and made the diff alarming.
+
+0.8.2 replaces the scanner with a section-level parser: parse →
+filter/mutate → re-emit. The managed key always lands at the end of
+`[shell_environment_policy.set]`, and exactly one blank line goes
+between every two emitted sections — matches the convention every other
+tool that writes config.toml uses. Behaviour and inputs are unchanged;
+all 25 tests still pass.
+
 ## 0.8.1
 
 Fix: 0.8.0 dropped the user-facing burden of "export COGRAPH_TOKEN= and

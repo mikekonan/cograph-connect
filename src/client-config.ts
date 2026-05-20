@@ -215,6 +215,89 @@ export function mergeJsonMcpConfig(
  * used npx, but the inline-token shape was the same kind of broken-
  * coupling cleanup as the JSON-side bridge removal.
  */
+/**
+ * A TOML section as we re-emit it: the bracketed header (e.g.
+ * `[shell_environment_policy.set]`) plus the lines that belong to it. The
+ * implicit "preamble" before any header (top-level keys like `model = "..."`)
+ * is represented with `header: null`.
+ *
+ * We don't try to parse values — just preserve them as-is. The only
+ * structured manipulation we do is at the section level (drop, append, or
+ * filter individual key lines inside one section).
+ */
+type TomlSection = {
+  header: string | null;
+  lines: string[];
+};
+
+function parseTomlSections(raw: string): TomlSection[] {
+  const sections: TomlSection[] = [{ header: null, lines: [] }];
+  for (const line of raw.split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) {
+      sections.push({ header: line, lines: [] });
+    } else {
+      sections[sections.length - 1].lines.push(line);
+    }
+  }
+  return sections;
+}
+
+function emitTomlSections(sections: TomlSection[]): string {
+  const blocks: string[] = [];
+  for (const sec of sections) {
+    const lines = [...sec.lines];
+    while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    while (lines.length > 0 && lines[0] === "") lines.shift();
+    // Skip an empty preamble (no header, no content) so the output doesn't
+    // start with a stray blank line.
+    if (sec.header === null && lines.length === 0) continue;
+    const block: string[] = [];
+    if (sec.header !== null) block.push(sec.header);
+    for (const l of lines) block.push(l);
+    blocks.push(block.join("\n"));
+  }
+  // Exactly one blank line between sections (TOML doesn't require it, but it
+  // matches how every other tool that touches config.toml writes it).
+  return blocks.length ? `${blocks.join("\n\n")}\n` : "";
+}
+
+/**
+ * 0.6.0–0.7.0 cograph-connect inlined the token as `bearer_token = "…"`
+ * directly into the Codex TOML block. The Codex CLI parses that key but the
+ * MCP runtime never reads it as an Authorization header — every session
+ * 401s silently. The only binding form Codex actually applies is
+ * `bearer_token_env_var = "<NAME>"`, which makes Codex look up that env
+ * var name at MCP-connect time.
+ *
+ * 0.8.0 reverted to `bearer_token_env_var` but pushed the env-export burden
+ * onto the user (manual `export COGRAPH_TOKEN=…` in `~/.zshrc` for CLI and
+ * `launchctl setenv` for Desktop — two different mechanisms, easy to miss
+ * one). 0.8.1 closes that gap by writing the token into Codex's own
+ * `[shell_environment_policy.set]` block, which Codex injects into the env
+ * of every MCP child process it spawns. Both CLI and Desktop read the same
+ * `~/.codex/config.toml`, so a single edit covers both — no shell rc, no
+ * launchctl, no LaunchAgent.
+ *
+ * The merge is structured at the SECTION level (parse → mutate → re-emit)
+ * rather than line-by-line, so blank-line separators between sections are
+ * preserved cleanly and the managed `COGRAPH_TOKEN` key always lands at the
+ * end of `[shell_environment_policy.set]` regardless of how the surrounding
+ * file is formatted.
+ *
+ * Three sections are managed:
+ *  - `[mcp_servers.cograph]` — fully replaced; pre-existing inline
+ *    `bearer_token = …` is treated as legacy (the 0.6.0–0.7.0 regression)
+ *    and surfaced via `removedNpxBridge`.
+ *  - `[mcp_servers.gitnexus]` — legacy server name from gitnexus era;
+ *    dropped entirely and surfaced via `removedLegacy`.
+ *  - `[shell_environment_policy.set]` — MERGED, not replaced. Other keys
+ *    (CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR, USE_BUILTIN_RIPGREP, etc.)
+ *    are preserved verbatim; only our managed `COGRAPH_TOKEN[_PROFILE]` key
+ *    is rewritten. If the section doesn't exist yet, it's created.
+ *
+ * The flag name `removedNpxBridge` is kept for symmetry with the JSON
+ * code path — "we cleaned up a legacy non-direct-HTTP setup".
+ */
 export function mergeCodexTomlConfig(
   raw: string | null,
   profileName: string,
@@ -222,96 +305,66 @@ export function mergeCodexTomlConfig(
 ): MergeResult {
   const envVarName = codexEnvVarName(profileName);
   const managedTokenLine = `${envVarName} = ${JSON.stringify(profile.token)}`;
-  const lines = (raw ?? "").split(/\r?\n/);
-  const output: string[] = [];
+  const cographHeader = "[mcp_servers.cograph]";
+  const shellEnvHeader = "[shell_environment_policy.set]";
 
+  const sections = parseTomlSections(raw ?? "");
   let removedLegacy = false;
   let removedInlineTokenBlock = false;
-  let mode: "default" | "skip-cograph" | "skip-gitnexus" | "shell-env" =
-    "default";
-  let currentBlockHasInlineToken = false;
-  let shellEnvSectionFound = false;
+  let shellEnvSection: TomlSection | null = null;
 
-  const closeMode = () => {
-    if (mode === "skip-cograph" && currentBlockHasInlineToken) {
-      removedInlineTokenBlock = true;
-    }
-    if (mode === "shell-env") {
-      // Append our managed token line at the end of the shell-env block
-      // (other keys from the user's existing config were emitted as-is
-      // during the section; we re-emit our managed key here so it's
-      // always present and points at the latest token value).
-      output.push(managedTokenLine);
-    }
-    currentBlockHasInlineToken = false;
-    mode = "default";
-  };
-
-  for (const line of lines) {
-    const isHeader = /^\s*\[/.test(line);
-    if (isHeader && mode !== "default") {
-      closeMode();
-      // Fall through to default-mode processing of this new header.
-    }
-    if (mode === "default") {
-      if (/^\s*\[mcp_servers\.cograph\]\s*$/.test(line)) {
-        mode = "skip-cograph";
-        continue;
-      }
-      if (/^\s*\[mcp_servers\.gitnexus\]\s*$/.test(line)) {
-        mode = "skip-gitnexus";
-        removedLegacy = true;
-        continue;
-      }
-      if (/^\s*\[shell_environment_policy\.set\]\s*$/.test(line)) {
-        mode = "shell-env";
-        shellEnvSectionFound = true;
-        output.push(line);
-        continue;
-      }
-      output.push(line);
-      continue;
-    }
-    if (mode === "skip-cograph") {
-      if (/^\s*bearer_token\s*=/.test(line)) {
-        currentBlockHasInlineToken = true;
+  const kept: TomlSection[] = [];
+  for (const sec of sections) {
+    if (sec.header && /^\s*\[mcp_servers\.cograph\]\s*$/.test(sec.header)) {
+      if (sec.lines.some((l) => /^\s*bearer_token\s*=/.test(l))) {
+        removedInlineTokenBlock = true;
       }
       continue;
     }
-    if (mode === "skip-gitnexus") {
+    if (sec.header && /^\s*\[mcp_servers\.gitnexus\]\s*$/.test(sec.header)) {
+      removedLegacy = true;
       continue;
     }
-    if (mode === "shell-env") {
-      // Strip any pre-existing line for OUR managed key — we re-emit it via
-      // closeMode() so the value always reflects the current profile.token.
-      // Other keys in the section are preserved verbatim.
-      const keyMatch = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
-      if (keyMatch && keyMatch[1] === envVarName) {
-        continue;
-      }
-      output.push(line);
-      continue;
+    if (
+      sec.header &&
+      /^\s*\[shell_environment_policy\.set\]\s*$/.test(sec.header)
+    ) {
+      shellEnvSection = sec;
     }
-  }
-  closeMode();
-
-  while (output.length > 0 && output[output.length - 1] === "") {
-    output.pop();
+    kept.push(sec);
   }
 
-  let prelude = output.join("\n");
-  if (!shellEnvSectionFound) {
-    const newSection = `[shell_environment_policy.set]\n${managedTokenLine}`;
-    prelude = prelude.length ? `${prelude}\n\n${newSection}` : newSection;
+  if (shellEnvSection) {
+    // Strip the managed key if it was already there (we rewrite with the
+    // current token value), then append it at the end of this section.
+    shellEnvSection.lines = shellEnvSection.lines.filter((line) => {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/);
+      return !(m && m[1] === envVarName);
+    });
+    while (
+      shellEnvSection.lines.length > 0 &&
+      shellEnvSection.lines[shellEnvSection.lines.length - 1] === ""
+    ) {
+      shellEnvSection.lines.pop();
+    }
+    shellEnvSection.lines.push(managedTokenLine);
+  } else {
+    kept.push({
+      header: shellEnvHeader,
+      lines: [managedTokenLine],
+    });
   }
 
-  const cographBlock = [
-    "[mcp_servers.cograph]",
-    `url = ${JSON.stringify(profile.url)}`,
-    `bearer_token_env_var = ${JSON.stringify(envVarName)}`,
-  ];
+  kept.push({
+    header: cographHeader,
+    lines: [
+      `url = ${JSON.stringify(profile.url)}`,
+      `bearer_token_env_var = ${JSON.stringify(envVarName)}`,
+    ],
+  });
+
   return {
-    content: `${prelude.length ? `${prelude}\n\n` : ""}${cographBlock.join("\n")}\n`,
+    content: emitTomlSections(kept),
     removedLegacy,
     removedNpxBridge: removedInlineTokenBlock,
   };
