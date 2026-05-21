@@ -14,15 +14,18 @@ stacks.
 
 ## What It Installs
 
-Per client. Three of the four clients get direct HTTP with an inline
-Bearer header — Claude Desktop's config validator only accepts stdio,
+Per client. Claude Code and Cursor get direct HTTP with an inline Bearer
+header. Codex also uses direct HTTP, but the token is bound through
+`bearer_token_env_var` plus Codex's own `[shell_environment_policy.set]`
+block because Codex does not apply inline `bearer_token = "..."` as an
+Authorization header. Claude Desktop's config validator only accepts stdio,
 so for that one we shell out through the `mcp-remote` bridge:
 
 | Client | Config file | MCP entry shape | SKILL.md |
 |---|---|---|---|
 | Claude Code (`claude-code`) | `~/.claude.json` | `{ type: "http", url, headers: { Authorization: "Bearer …" } }` | `~/.claude/skills/cograph-connect/` |
 | Cursor (`cursor`) | `~/.cursor/mcp.json` | `{ url, headers: { Authorization: "Bearer …" } }` | — |
-| Codex (`codex`) | `~/.codex/config.toml` | `[mcp_servers.cograph]` with `url` + `bearer_token = "<pat>"` | `~/.codex/skills/cograph-connect/` |
+| Codex (`codex`) | `~/.codex/config.toml` | `[shell_environment_policy.set] COGRAPH_TOKEN = "…"` + `[mcp_servers.cograph]` with `url` + `bearer_token_env_var = "COGRAPH_TOKEN"` | `~/.codex/skills/cograph-connect/` |
 | Claude Desktop (`claude`) | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) | `npx -y mcp-remote <url> --header "Authorization: Bearer …"` with `env: { NODE_OPTIONS: "--use-system-ca" }` | — |
 
 ### Why Claude Desktop is special
@@ -48,10 +51,11 @@ The official Anthropic alternative for remote MCP in Claude Desktop is
 
 - Source of truth: `~/.config/cograph-connect/config.json` (mode `0600`,
   directory mode `0700`). Updated by `cograph-connect setup`.
-- The same token is written **inline** into every client's config file as
-  a literal `Authorization: Bearer …` value (JSON clients) or
-  `bearer_token = "…"` line (Codex TOML). These files inherit the user's
-  default permissions — restrict if needed.
+- JSON clients store the token inline as `Authorization: Bearer …`.
+- Codex stores the token in `~/.codex/config.toml` under
+  `[shell_environment_policy.set]` and references it from
+  `[mcp_servers.cograph]` via `bearer_token_env_var`.
+- These files inherit the user's default permissions — restrict if needed.
 
 ## Token Scopes
 
@@ -98,9 +102,11 @@ backed up, and the legacy entry is removed in favour of the new
   and stored the Codex PAT in a `COGRAPH_TOKEN_<PROFILE>` shell env var
   referenced via `bearer_token_env_var`.
 
-0.6.x narrows the npx bridge to **Claude Desktop only** (the one client
-whose config schema actually requires stdio) and inlines the Codex
-token directly in `config.toml`. Re-running setup migrates both:
+0.6.x narrowed the npx bridge to **Claude Desktop only** (the one client
+whose config schema actually requires stdio) but incorrectly inlined the
+Codex token directly in `config.toml`. 0.8.x migrates Codex back to
+`bearer_token_env_var` and writes the matching token into
+`[shell_environment_policy.set]`. Re-running setup migrates both:
 
 ```bash
 npx -y cograph-connect@latest setup
@@ -112,13 +118,13 @@ npx -y cograph-connect@latest setup
   replaced with `{ type: "http", url, headers }` and reported as
   `removed legacy npx mcp-remote bridge`. (Claude Desktop keeps its
   bridge — that's not legacy there.)
-- Any `bearer_token_env_var = …` line in `~/.codex/config.toml` →
-  replaced with inline `bearer_token = "…"` and reported as
-  `removed legacy bearer_token_env_var`.
+- Any inline `bearer_token = …` line in `~/.codex/config.toml` →
+  replaced with `bearer_token_env_var = "COGRAPH_TOKEN"` plus
+  `[shell_environment_policy.set] COGRAPH_TOKEN = "…"`, and reported as
+  `removed legacy inline bearer_token`.
 
 Old `.bak.*` files preserve the previous state. Restart each client to
-pick up the new config; you can drop any `export COGRAPH_TOKEN_…=…`
-lines from your shell rc.
+pick up the new config.
 
 ## Troubleshooting
 

@@ -161,20 +161,76 @@ export function mergeJsonMcpConfig(
     [MCP_SERVER_NAME]: existingCograph,
     ...rest
   } = existingServers;
-  const removedLegacy = legacyEntry !== undefined;
+  let removedLegacy = legacyEntry !== undefined;
   const newEntry = buildEntry(client, profileName, profile);
   // Detect "the previous entry used the npx/mcp-remote stdio bridge but the
   // new shape doesn't" — that's the migration we want to surface. Claude
   // Desktop legitimately uses the bridge today (its config validator rejects
   // remote HTTP), so a npx-shaped existing entry there is NOT legacy.
   const newEntryIsNpxBridge = isNpxMcpRemoteEntry(newEntry);
-  const removedNpxBridge =
+  let removedNpxBridge =
     !newEntryIsNpxBridge &&
     (isNpxMcpRemoteEntry(existingCograph) || isNpxMcpRemoteEntry(legacyEntry));
   record.mcpServers = {
     ...rest,
     [MCP_SERVER_NAME]: newEntry,
   };
+
+  if (client === "claude-code") {
+    // Claude Code's per-project `projects.<path>.mcpServers` REPLACES the
+    // top-level mcpServers — it does NOT merge with it. So if any directory
+    // has a per-project override (added implicitly when the user configures
+    // even one other server like archon or codex-cli in that directory),
+    // cograph will be invisible there unless its entry is also written into
+    // that per-project block.
+    //
+    // Likewise, when `setup` runs a second time with a re-issued PAT, the
+    // top-level cograph entry gets the new token but every per-project
+    // block still has the old token → silent 401s in those directories.
+    //
+    // We propagate the fresh entry into every existing per-project
+    // mcpServers block (replacing stale cograph entries, adding it where
+    // missing). Projects WITHOUT a per-project mcpServers block are left
+    // alone — they correctly inherit the top-level entry.
+    //
+    // Only applies to claude-code: cursor and claude (Desktop) use
+    // separate flat config files without a `projects.*` structure.
+    const projects = record.projects;
+    if (projects && typeof projects === "object" && !Array.isArray(projects)) {
+      const projectsRecord = projects as Record<string, unknown>;
+      for (const projPath of Object.keys(projectsRecord)) {
+        const proj = projectsRecord[projPath];
+        if (!proj || typeof proj !== "object" || Array.isArray(proj)) continue;
+        const projObj = proj as Record<string, unknown>;
+        const projServers = projObj.mcpServers;
+        if (
+          !projServers ||
+          typeof projServers !== "object" ||
+          Array.isArray(projServers)
+        ) {
+          continue;
+        }
+        const servers = projServers as Record<string, unknown>;
+        const {
+          [LEGACY_MCP_SERVER_NAME]: projLegacy,
+          [MCP_SERVER_NAME]: projExisting,
+          ...projRest
+        } = servers;
+        if (projLegacy !== undefined) removedLegacy = true;
+        if (
+          !newEntryIsNpxBridge &&
+          (isNpxMcpRemoteEntry(projExisting) || isNpxMcpRemoteEntry(projLegacy))
+        ) {
+          removedNpxBridge = true;
+        }
+        projObj.mcpServers = {
+          ...projRest,
+          [MCP_SERVER_NAME]: newEntry,
+        };
+      }
+    }
+  }
+
   return {
     content: `${JSON.stringify(record, null, 2)}\n`,
     removedLegacy,

@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.8.3
+
+Fix: Claude Code's per-project `mcpServers` overrides were silently
+holding stale cograph entries (or no cograph at all) after `setup`.
+
+Claude Code's `~/.claude.json` stores both a global `mcpServers` block
+and per-project `projects.<path>.mcpServers` blocks. The per-project
+block REPLACES the global one for that directory (not merges) — a
+directory with even one other per-project server (archon, codex-cli,
+…) silently loses cograph unless its entry is also written into the
+per-project block.
+
+cograph-connect ≤0.8.2 only wrote the top-level entry. Two visible
+consequences:
+
+1. Directories with any per-project `mcpServers` override saw no
+   cograph at all in Claude Code (typical user hit ~50 such
+   directories in our test sample).
+
+2. Re-running `setup` with a re-issued PAT updated the top-level token
+   but left every per-project block pointing at the previous token —
+   silent 401s in those directories on the next session.
+
+0.8.3 propagates the fresh cograph entry into every existing
+`projects.<path>.mcpServers` block during the `claude-code` merge:
+
+- Stale per-project cograph entries are replaced with the current
+  token/URL.
+- Per-project blocks without cograph get it added.
+- Projects WITHOUT a per-project `mcpServers` block are left alone —
+  they correctly inherit the top-level entry.
+
+Per-project propagation only applies to `claude-code`. Cursor and
+Claude Desktop use separate flat config files without a `projects.*`
+structure, so their merge path is unchanged.
+
+A `gitnexus` entry found inside any per-project block triggers
+`removedLegacy` the same way the top-level path does.
+
 ## 0.8.2
 
 Patch: 0.8.1's `mergeCodexTomlConfig` was a line-by-line scanner that

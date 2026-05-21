@@ -99,6 +99,158 @@ describe("client config — Claude Code (direct HTTP)", () => {
   });
 });
 
+describe("client config — Claude Code per-project propagation", () => {
+  // Claude Code stores per-project MCP server lists under
+  // `projects.<path>.mcpServers`. Critically, that block REPLACES the
+  // top-level mcpServers (not merges with it). So a directory with even
+  // one other per-project server (archon, codex-cli, etc.) will silently
+  // miss the top-level cograph unless we propagate it down.
+
+  test("writes fresh cograph entry into every existing per-project mcpServers", () => {
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        mcpServers: {},
+        projects: {
+          "/Users/me/work/repo-a": {
+            mcpServers: { archon: { command: "archon", args: ["mcp"] } },
+          },
+          "/Users/me/work/repo-b": {
+            mcpServers: { "codex-cli": { command: "codex", args: ["mcp-server"] } },
+          },
+        },
+      }),
+      "claude-code",
+      "default",
+      DEFAULT_PROFILE,
+    );
+    const merged = JSON.parse(result.content);
+    expect(merged.projects["/Users/me/work/repo-a"].mcpServers.cograph).toEqual({
+      type: "http",
+      url: "https://cograph.example.com/mcp/",
+      headers: { Authorization: "Bearer cgr_pat_abc123" },
+    });
+    expect(merged.projects["/Users/me/work/repo-a"].mcpServers.archon).toBeDefined();
+    expect(merged.projects["/Users/me/work/repo-b"].mcpServers.cograph).toEqual({
+      type: "http",
+      url: "https://cograph.example.com/mcp/",
+      headers: { Authorization: "Bearer cgr_pat_abc123" },
+    });
+    expect(merged.projects["/Users/me/work/repo-b"].mcpServers["codex-cli"]).toBeDefined();
+  });
+
+  test("replaces a stale per-project cograph entry with the fresh top-level token", () => {
+    // Reproducer for the actual user-hit bug: setup ran once with token A,
+    // a manual backfill propagated token A into 50 per-project blocks; setup
+    // ran again with token B (PAT re-issued); top-level got token B but the
+    // 50 per-project blocks were left at token A → 401s in those dirs.
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        mcpServers: {
+          cograph: {
+            type: "http",
+            url: "https://cograph.example.com/mcp/",
+            headers: { Authorization: "Bearer cgr_pat_TOKEN_A" },
+          },
+        },
+        projects: {
+          "/Users/me/work/repo-a": {
+            mcpServers: {
+              archon: { command: "archon", args: ["mcp"] },
+              cograph: {
+                type: "http",
+                url: "https://cograph.example.com/mcp/",
+                headers: { Authorization: "Bearer cgr_pat_STALE" },
+              },
+            },
+          },
+        },
+      }),
+      "claude-code",
+      "default",
+      DEFAULT_PROFILE,
+    );
+    const merged = JSON.parse(result.content);
+    // Top-level got the fresh token (cgr_pat_abc123 from DEFAULT_PROFILE)
+    expect(merged.mcpServers.cograph.headers.Authorization).toBe(
+      "Bearer cgr_pat_abc123",
+    );
+    // Per-project block also got the same fresh token — this is the bug fix
+    expect(
+      merged.projects["/Users/me/work/repo-a"].mcpServers.cograph.headers.Authorization,
+    ).toBe("Bearer cgr_pat_abc123");
+    // The other per-project server is untouched
+    expect(merged.projects["/Users/me/work/repo-a"].mcpServers.archon).toBeDefined();
+  });
+
+  test("leaves projects WITHOUT per-project mcpServers untouched (they inherit top-level)", () => {
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        projects: {
+          "/Users/me/work/inherits-global": {
+            history: [{ display: "previous prompt" }],
+          },
+        },
+      }),
+      "claude-code",
+      "default",
+      DEFAULT_PROFILE,
+    );
+    const merged = JSON.parse(result.content);
+    // Did NOT inject an mcpServers block where there wasn't one — those
+    // projects correctly inherit the top-level entry by Claude Code semantics.
+    expect(
+      merged.projects["/Users/me/work/inherits-global"].mcpServers,
+    ).toBeUndefined();
+    // Top-level was still written.
+    expect(merged.mcpServers.cograph).toBeDefined();
+    // Other per-project data (history) preserved.
+    expect(
+      merged.projects["/Users/me/work/inherits-global"].history,
+    ).toHaveLength(1);
+  });
+
+  test("legacy gitnexus in a per-project mcpServers triggers removedLegacy", () => {
+    const result = mergeJsonMcpConfig(
+      JSON.stringify({
+        projects: {
+          "/Users/me/work/legacy-repo": {
+            mcpServers: { gitnexus: { command: "gitnexus", args: ["mcp"] } },
+          },
+        },
+      }),
+      "claude-code",
+      "default",
+      DEFAULT_PROFILE,
+    );
+    const merged = JSON.parse(result.content);
+    expect(
+      merged.projects["/Users/me/work/legacy-repo"].mcpServers.gitnexus,
+    ).toBeUndefined();
+    expect(
+      merged.projects["/Users/me/work/legacy-repo"].mcpServers.cograph,
+    ).toBeDefined();
+    expect(result.removedLegacy).toBe(true);
+  });
+
+  test("does NOT propagate per-project for cursor or claude (Desktop)", () => {
+    // Cursor and Claude Desktop have flat config files; their per-project
+    // story (if any) is different. cograph-connect only manages the
+    // top-level mcpServers for those clients.
+    const cursorResult = mergeJsonMcpConfig(
+      JSON.stringify({
+        projects: { "/foo": { mcpServers: { other: { command: "x" } } } },
+      }),
+      "cursor",
+      "default",
+      DEFAULT_PROFILE,
+    );
+    const merged = JSON.parse(cursorResult.content);
+    // Cursor block should NOT have injected cograph into projects.foo.mcpServers
+    expect(merged.projects["/foo"].mcpServers.cograph).toBeUndefined();
+    expect(merged.mcpServers.cograph).toBeDefined();
+  });
+});
+
 describe("client config — Cursor (direct HTTP, no type field)", () => {
   test("writes url+headers without type discriminator", () => {
     const merged = JSON.parse(
