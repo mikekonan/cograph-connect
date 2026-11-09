@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.0
+
+`SKILL.md` now agrees with the server's new short instructions.
+
+The Cograph server sends short `instructions` itself, and each tool's
+description carries its own rules. The skill no longer repeats or
+contradicts them. It says when to use Cograph, gives a ready block for
+a subagent's prompt, and keeps the error handling.
+
+What the skill adds:
+
+- When to use Cograph: code and docs in team repositories that are not
+  in your working directory, or a search by meaning. If the repository
+  is in your working directory and you know a name, grep and read the
+  files yourself.
+- A block to paste into a subagent's prompt as is, and the rule to pass
+  the subagent the repository as `host/owner/name`. Most real traffic
+  comes from subagents, and their prompt is written from this skill.
+
+What the skill drops:
+
+- "The playbook in `initialize` is the source of truth, read it once".
+  The server text is short now and the client reads it itself.
+- The call ceiling and the retry count. The server owns these numbers.
+- The exact refusal phrase. The server says what to do when searches
+  find nothing.
+- The ban on local grep on `502` / `504`. Grep is the right tool for
+  files in your working directory.
+- Advice to read the `cograph://briefing` and `cograph://my-context`
+  resources.
+
+Kept: what to tell the user on `401`, `403` / `INSUFFICIENT_SCOPE`,
+`502` / `504` and `REPO_NOT_READY`.
+
+No CLI changes. Re-run `cograph-connect setup` to pick up the new
+`SKILL.md`.
+
 ## 0.8.3
 
 Fix: Claude Code's per-project `mcpServers` overrides were silently

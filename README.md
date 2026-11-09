@@ -155,9 +155,10 @@ underlying cause and a targeted hint. Common cases:
 
 An agent called `cograph_retrieve` / `cograph_search_code` /
 `cograph_outline` / `cograph_read_node` / `cograph_read_file_range` /
-`cograph_related` without a `repository` argument. The SKILL.md tells
-agents to call `cograph_repositories` first; if you see this in agent
-traces, the agent skipped that step.
+`cograph_related` without a `repository` argument. The server's own
+instructions tell agents to get it as `host/owner/name` from
+`cograph_repositories`; if you see this in agent traces, the agent
+skipped that step.
 
 ### "Failed to reconnect to claude.ai Cograph"
 
