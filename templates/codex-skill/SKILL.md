@@ -1,70 +1,46 @@
 ---
 name: cograph-connect
-description: Use Cograph MCP for indexed repos, generated wiki pages, code symbols, file ranges, and markdown collections. The server-side playbook (delivered in `initialize`) is the source of truth — read it once per session and follow it.
+description: Cograph MCP is a read-only index of the team's repositories and docs. Use for code and docs in team repositories that are not in your working directory, or to search them by meaning. When a subagent does this work, pass it the repository as `host/owner/name`.
 ---
 
 # Cograph
 
-The hosted Cograph deployment ships an **operator-tunable, ACL-aware
-playbook** in the MCP `initialize` response (the FastMCP
-`instructions=` payload). It tells you:
+The Cograph server sends its own short instructions, and each tool's
+description carries its rules. This file adds what the server cannot
+know: when to reach for Cograph, what to tell a subagent, and what to
+tell the user when a call fails.
 
-- Which repositories and collections this user can see.
-- How to plan a question: routing → outline → retrieve → search_code,
-  with the per-tool decision tree pinned to the L1 / L2 / L3 schema
-  on every tool description.
-- The "≥3 distinct approaches before giving up" rule and the 8-call
-  ceiling.
-- Cite-or-bust against the `provenance` block.
-- Any operator-specific briefing (domain terms, freshness caveats,
-  which service owns which surface) — admins edit this live at
-  `/admin?tab=mcp`.
+## When to use it
 
-**Read the `instructions` payload once per session and follow it.**
-Do not duplicate decision logic here that the server already covers —
-the server-side text is rendered fresh on every `initialize` and is
-guaranteed to match the live tool surface; anything in this file is a
-snapshot that drifts.
+- Code and docs in team repositories that are not in your working
+  directory.
+- A search by meaning, when you do not know a name.
 
-## Re-fetching the playbook mid-session
+If the repository is in your working directory and you know a name,
+grep and read the files yourself.
 
-Two MCP resources expose the same state out of band if your context
-gets compacted or you want to confirm something without a full
-`initialize`:
+## Subagents
 
-- `cograph://briefing` — the operator briefing (just the deployment-
-  specific guidance).
-- `cograph://my-context` — the ACL-aware "where am I" list of repos
-  and collections this user can see.
+Pass the subagent the repository as `host/owner/name` (for example
+`github.com/acme/warehouse`) and put this block in its prompt as is:
 
-Read these on demand. They are cheap.
+```text
+Cograph MCP is a read-only index of the team's repositories and docs.
+Find with cograph_search_code (one identifier) or cograph_retrieve (a question in words). Results show an excerpt; read the best hit with cograph_read_node(node_id). If a hit is a helper, see its callers; if a test, what it calls: cograph_related.
+Stop when you have read the code that answers and can cite it as path:start-end. Do not repeat an identical call. If two different searches find nothing, say what you searched and stop.
+If the repository is in your working directory and you know a name, grep and read the files yourself.
+```
 
-## When something looks wrong
+## When a call fails
 
-The few cases the server-side playbook can't preempt — surface them
-to the user rather than guessing:
+Tell the user; do not guess around it.
 
-- **`401` / Bearer required** — the stored PAT expired or was
-  rotated. Re-run `cograph-connect setup` with a fresh token that
-  carries the `mcp` and `api:read` scopes.
-- **`403` / `INSUFFICIENT_SCOPE`** — token is valid but missing a
-  scope; re-run setup with both `mcp` and `api:read`.
-- **`502` / `504`** — hosted backend is unhealthy or finishing an
-  index pass. Wait and retry; never silently fall back to local grep
-  or a web search.
-- **`REPO_NOT_READY`** — the repo's index is rebuilding (status not
-  `ready`). The server admits this is transient; ask the user to
-  wait or pick a different repo.
-- **0 results after three distinct attempts** — the playbook tells
-  you exactly what to say: "I don't have enough information in this
-  Cograph instance to answer." Use that wording verbatim. Do not
-  improvise.
-
-## What this stub deliberately does NOT include
-
-Earlier versions of this file duplicated the server's decision tree,
-trust matrix, and tool catalog. That was a maintenance trap — every
-playbook change shipped server-side had to be mirrored here, and the
-two surfaces drifted within weeks. The single source of truth lives
-in `backend/app/mcp/instructions.py` on the cograph backend; this
-file just points you at it.
+- **`401`** - the token expired or was rotated. Re-run
+  `cograph-connect setup` with a fresh token that has the `mcp` and
+  `api:read` scopes.
+- **`403` / `INSUFFICIENT_SCOPE`** - the token is valid but lacks a
+  scope. Re-run setup with a token that has both `mcp` and `api:read`.
+- **`502` / `504`** - the server is unhealthy or busy indexing. Try
+  again later.
+- **`REPO_NOT_READY`** - the repository is being indexed. Ask the user
+  to wait or to pick another repository.
